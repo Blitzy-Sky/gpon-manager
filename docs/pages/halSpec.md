@@ -645,7 +645,7 @@ the shipped schema directly, which is the check `Quality Control` recommends.
 *Derived from `source/TR-181/middle_layer_src/gponmgr_dml_hal.c:39-44,113,119,147,266,280,285`;
 `json_rpc_common.h:94-98` at the pinned transport revision; the absence of any logging requirement in
 both files under `hal_schema/` and in `config/`; and the register of
-`rdkb-halif-moca/docs/pages/MoCAHalSpec.md`.*
+`rdkb-halif-moca/docs/pages/halSpec.md`.*
 
 ### Memory and performance requirements
 
@@ -727,7 +727,7 @@ cited file should carry a review of the affected topics.
 
 *Derived from `.github/CODEOWNERS:5`; the meta-schema and instance validation of both files under
 `hal_schema/` and of the eight `hal_schema/example_*_msg.json` files; and the register of
-`rdkb-halif-moca/docs/pages/MoCAHalSpec.md`.*
+`rdkb-halif-moca/docs/pages/halSpec.md`.*
 
 ### Licensing
 
