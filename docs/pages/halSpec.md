@@ -98,13 +98,16 @@ itself the owning service. That is what the second box in the diagram above repr
 
 **The object tree is a vendor extension, not a Broadband Forum model, and that decides where its
 semantics come from.** Every parameter lives under `Device.X_RDK_ONT`, and the `X_` prefix marks an
-extension to the `TR-181` [`Device:2` root data model](https://device-data-model.broadband-forum.org/)
-rather than a branch the Broadband Forum defines. No `Device:2` release specifies `X_RDK_ONT`, so
-this document does not cite a data-model version for it. The meaning of the parameters comes from
-the optical standards the schema's own descriptions reference — `ITU-T G.988` for the `OMCI` managed
-entities and their counters, cited by clause in seven parameter descriptions, and `ITU-T G.9807`,
-cited in three `GTC` error-counter descriptions — together with the manager's `DML` description
-[`config/RdkGponManager.xml`]. The five `PhysicalMedia` sub-objects that mirror `TR-181` interface
+extension to the `TR-181` `Device:2` root data model rather than a branch the Broadband Forum
+defines. The published model this repository was checked against is **`Device:2.21`** — the
+Broadband Forum `Device:2` root data model at release `2.21`, published as
+[`TR-181 Device:2, release 2.21`](https://cwmp-data-models.broadband-forum.org/tr-181-2-21-0-cwmp.html) —
+which defines the interface-object conventions the schema borrows and contains no occurrence of
+`X_RDK_ONT`; no `Device:2` release specifies that branch, so no data-model version is cited as its
+authority. The meaning of the parameters comes from the optical standards the schema's own
+descriptions reference — `ITU-T G.988` for the `OMCI` managed entities and their counters, cited by
+clause in seven parameter descriptions, and `ITU-T G.9807`, cited in three `GTC` error-counter
+descriptions — together with the manager's `DML` description [`config/RdkGponManager.xml`]. The five `PhysicalMedia` sub-objects that mirror `TR-181` interface
 conventions, `Alias`, `Enable`, `LastChange`, `LowerLayers` and `Upstream`, exist only in the
 variant schema and are the subject of `Optional Components`.
 
@@ -166,8 +169,8 @@ for a unified-WAN build must therefore install it under one of those two names, 
 being started with that configuration path as its only argument.
 
 **There is no optional transport, no optional action and no optional notification type.** Both
-schemas declare the same eleven actions, the same nine enumerations and the same eighteen
-subscribable parameters. The only list the schemas mark as optional is
+schemas declare the same eleven actions, the same nine enumerations and the same eighteen entries in
+`subscribeEventSupportedList`. The only list the schemas mark as optional is
 `getParameterOptionalList`, which holds 24 read paths — the 21 `Gem` Ethernet-flow entries and the
 three `TR69` entries — and it is a read-scoping list rather than a build option: a vendor that does
 not implement one of those paths answers `Not Supported`, as `Internal Error Handling` describes.
@@ -265,28 +268,97 @@ library's thread inside the callee. Any state a callback touches must therefore 
 the caller; the manager's callback parses the message and hands the result to the surrounding
 component rather than mutating shared state in place.
 
-**Concurrent requests are serialised by the library, and the consequence is a queue, not
-interleaving.** The synchronous send path takes a mutex for the whole exchange: the transport
-library documents `json_hal_client_send_and_get_reply()` and its timed form as blocked "until we get
-a proper response from the server or timed out happened", and states that the lock it takes is
-"unlocked once we get response from server or when the timeout period expired". So a second caller
-does not have its request interleaved with the first — it waits for the first exchange to finish or
-to time out. Two things follow that a caller must plan for:
+**A callback runs on the receive thread with the transport's subscription lock held, which makes two
+ordinary-looking things inside a handler deadlock outright.** The pinned client dispatches an event from
+`response_parse_cb()`, which the socket thread calls for each document it receives
+[`json_hal_client.c:335`, invoked at `tcp_client.c:234`]. **That name, and `request_idle_cb()` in the
+rules below, are source-internal implementation details of the transport rather than part of any
+callable surface**: both are declared `static` inside `json_hal_client.c` [`:128` and `:104`
+respectively], appear in no transport header, and are reachable only as function pointers the client
+installs on itself [`:208-211`]. They are named because the behaviour they implement is the contract a
+caller's handler must satisfy, so a reader who needs to confirm a rule below can find it at the cited
+line — not because there is anything to call. The entry points a caller does call are the ones listed
+under `Initialization and Startup`, every one of them declared by a transport header. The event branch
+takes `gm_event_tracking_lock`, walks the subscription list and invokes the registered callback **with
+that lock still held**, releasing it only after the callback returns
+[`json_hal_client.c:427,440,472`]. The lock is a default, non-recursive mutex
+[`json_hal_client.c:93`]. Four rules follow, and they are normative for a caller of this interface:
 
-- **Throughput is one outstanding request at a time**, regardless of how many threads call. Batching
-  several parameters into one `params` array is the way to reduce round trips, subject to the buffer
-  limit in `Memory Model`.
-- **A slow or unresponsive server delays every waiting caller**, not only the one that asked. With
-  the ten-second floor described in `Blocking calls`, a server that stops answering costs each queued
-  caller its own full wait in turn.
+- **Do not make a synchronous HAL call from inside a callback.** A send waits on the condition
+  variable of its own request record [`json_hal_client.c:683`], and the only thread that can signal
+  that variable — on a reply [`:495-513`] or on the timeout tick [`:537-553`, driven from
+  `request_idle_cb()` at `:227-232`, which the same socket loop calls at `tcp_client.c:251-253`] — is
+  the thread the callback is currently occupying. The wait therefore cannot be satisfied and cannot
+  even expire: it is a deadlock, not a slow call that recovers when the tick budget
+  `Blocking calls` describes runs out. Work that needs a HAL request is queued to a
+  caller-owned thread and performed there.
+- **Do not subscribe, re-subscribe or terminate the client from inside a callback.**
+  `json_hal_client_subscribe_event()` locks the same `gm_event_tracking_lock`
+  [`json_hal_client.c:741`] that the dispatch already holds, and it also performs a synchronous send
+  first [`:718`], so it deadlocks twice over. `json_hal_client_terminate()` takes that lock as well
+  [`:798`]. All subscription changes belong outside the callback.
+- **Copy anything the callback needs after it returns.** The buffer handed to the callback is the
+  serialization of the event's own `JSON` object, obtained with `json_object_to_json_string_ext()`
+  [`json_hal_client.c:435`], so it points into storage that object owns; the object is released as
+  soon as dispatch finishes with it [`:516`]. The pointer is therefore valid for the duration of the
+  call and no longer. A callback that needs a parameter name, a value or the whole message afterwards
+  copies it into caller-owned storage before returning, and never stores the pointer it was given.
+- **Return promptly.** While a callback runs, the receive thread delivers no reply to any waiting
+  caller, ticks no request timeout and dispatches no further event, and no other subscription can be
+  serviced because the subscription lock is held. A callback that parses, copies and hands off costs
+  the whole client nothing; a callback that blocks stalls every exchange in flight.
+
+**The interface enforces none of the above.** The transport declares no re-entrancy guard, no
+recursive lock and no way for a caller to discover from inside a callback which thread it is on, so
+these rules are established by inspection of the pinned revision and must be observed by
+construction. A vendor server cannot cause a caller to break them, and cannot rescue a caller that
+does.
+
+**Whether two requests may be in flight at once is not specified by this interface, and a caller
+must not assume either behaviour.** The transport's own prose invites the assumption that one lock
+covers a whole exchange — it describes the synchronous send as blocked "until we get a proper response
+from the server or timed out happened" and says the lock it maintains is "unlocked once we get
+response from server or when the timeout period expired" [`json_hal_client.c:618-626`]. The code is
+narrower than the prose. Each call allocates its own tracking record, initialises a **per-request**
+mutex and condition variable on that record, locks it, appends the record to the client's pending
+list, sends, and waits on that record's condition variable
+[`json_hal_client.c:635,655-658,665,667,683`]. There is no process-wide exchange lock anywhere in the
+client, so two caller threads are not queued behind one another: both requests go out. And the
+pending list they append to is appended to **without** holding `gm_request_msg_tracking_lock`
+[`:665`], the lock the receive thread and the timeout ticker each hold while they traverse and delete
+from that same list [`:495-513` and `:537-553`].
+
+Neither schema states a concurrency limit, and the transport neither serialises submissions nor
+documents concurrent submission as supported, so this document states the position rather than
+inventing a guarantee either way. What a caller should do is consequently conservative:
+
+- **Issue HAL requests from one thread, or serialise them behind a lock the caller owns.** It is the
+  only arrangement this interface's evidence supports, and it is not what the reference caller does
+  for free: GponManager reaches the HAL both from its link state machine's own thread
+  [`source/GponManager/gponmgr_link_state_machine.c:141`, thread created at `:444`] and from its
+  `TR-181` handler path [`source/TR-181/middle_layer_src/gponmgr_dml_func.c:174,314,467,554`], and
+  nothing in this contract establishes that those two never overlap. A caller building on this
+  interface should not treat that arrangement as a worked example of safe concurrency.
+- **Reduce round trips by batching, not by parallelising.** Several parameters in one `params` array
+  cost one exchange; the same parameters from several threads cost several, with no stated behaviour
+  for the overlap. Size the batch against the request bound in `Memory Model`.
+- **Expect the wait to be per caller.** A slow or unresponsive server costs the calling thread the
+  full wait described in `Blocking calls`; where a caller has serialised its own requests, each
+  waiting thread then pays its own wait in turn.
+- **Do not treat request-identifier uniqueness as concurrency support.** Correlation by `reqId` is
+  what lets a reply find its request, and it works whatever the caller's threading; it says nothing
+  about whether the client's pending-list bookkeeping is safe against simultaneous submission.
 
 **Vendor obligation.** A server must tolerate a single long-lived client connection carrying
 sequential requests, and it must stamp every reply with the `reqId` of the request it answers —
 that identifier is the only field a client can correlate on, and the client library cross-checks it
-before handing a reply back.
+before handing a reply back. A server may not require a caller to hold more than one request open at
+a time, since this interface does not establish that a caller can.
 
-*Derived from `json_hal_client.h` and `json_hal_client.c` at the pinned transport revision cited in
-`Build Requirements`, and `source/TR-181/middle_layer_src/gponmgr_dml_hal.c:1389-1396`.*
+*Derived from `json_hal_client.h:49,116` and `json_hal_client.c:93,227-232,335,427-472,495-513,
+537-553,635,655-658,665,683,718,741,798` at the pinned transport revision cited in
+`Build Requirements`, from `tcp_client.c:234,251-253` there, and from
+`source/TR-181/middle_layer_src/gponmgr_dml_hal.c:1389-1396`.*
 
 ### Process Model
 
@@ -347,21 +419,50 @@ count rather than freeing unconditionally.
 
 #### Caller Responsibilities
 
-- **Release both handles on every path, including every failure path.** The reply must be released
-  even when the exchange reported failure, because the library may have produced a partial or error
-  reply before returning. The manager's pattern is a guarded release macro applied to both handles at
-  each exit [`source/TR-181/middle_layer_src/gponmgr_dml_hal.c:46-50`], used at every failure branch
-  around a send [`gponmgr_dml_hal.c:264-270`].
-- **Guard the release.** The reply out-parameter is left untouched when a call fails early, so it
-  must be tested before it is released; that is what the manager's macro does.
+- **Always release the request, on every path.** The caller creates the request handle and the client
+  library never takes ownership of it: the send path reads the request and returns without releasing
+  it, on both the success and the failure branch [`json_hal_client.c:667-704`]. So the request is the
+  caller's to release whatever the outcome. The manager's pattern is a guarded release macro applied
+  at each exit [`source/TR-181/middle_layer_src/gponmgr_dml_hal.c:46-50`], used at every failure
+  branch around a send [`gponmgr_dml_hal.c:264-270`].
+- **Release the reply only when the out-parameter was populated, which is why it must be initialised
+  to null and tested before release.** The library assigns the reply handle in exactly one place, and
+  only once the exchange returned a non-negative code [`json_hal_client.c:691-693`]; a send that
+  failed outright returns before touching the out-parameter at all [`:667-676`], and so does a wait
+  that expired. The client produces **no partial reply and no error reply object**, so there is
+  nothing extra to release on a failed exchange and a caller must not go looking for one.
+  Two consequences: a caller must set its reply variable to null before the call, because the library
+  will not — the manager declares its reply handle initialised that way
+  [`source/TR-181/middle_layer_src/gponmgr_dml_hal.c:250`] and releases it through the guarded macro
+  [`:46-50`, applied at `:267-268`] — and a caller must test that variable rather than the return code
+  alone, because the assignment goes through `json_tokener_parse()` [`json_hal_client.c:693`] and
+  yields null if the received document does not parse even though the exchange reported success.
 - **Do not retain a value extracted from a reply beyond the reply's lifetime.** Values read out of a
   reply with `json_hal_get_param()` must be copied into caller-owned storage before the reply handle
   is released. A pointer into a released `JSON` document is not valid afterwards.
-- **Bound what one message carries.** The transport's receive buffer is 16384 bytes. Larger messages
-  are reassembled across successive reads rather than truncated, but the buffer is not negotiable, so
-  a caller batching many parameters into one `params` array should size the batch with that figure in
-  mind. The bulk reads the manager issues are scoped by object prefix for exactly this reason; see
-  `API Surface`.
+- **Bound what a request carries. The 16384-byte figure applies to a request and not to a reply, and
+  the asymmetry belongs to the transport rather than to the protocol.** `MAX_BUFFER_SIZE` is 16384
+  bytes at the pinned transport revision [`json-rpc-common/json_rpc_common.h:87`], and the two ends of
+  the socket use it differently:
+  - **A request must fit one server read.** The server side receives into a single fixed buffer
+    [`tcp_server.c:106`], performs one `recv` into it [`:219`] and hands exactly what that call
+    returned to its message handler [`:262`], which builds a fresh `JSON` tokener for that call alone
+    and frees it before it returns [`json_hal_server.c:336,591`]. Nothing on the
+    server side accumulates across reads, so a request that does not arrive complete in one read is
+    not assembled into a document — it is parsed as a fragment, fails to complete, and is discarded
+    without a reply, which costs the caller its full wait for a message the server never answered.
+    The client's own send loop writes the whole request regardless of size
+    [`tcp_client.c:59-79`], so the loss happens at the server's read and is invisible on the sending
+    side. A caller batching many parameters into one `params` array must therefore split the batch
+    itself; the transport will not do it. The bulk reads the manager issues are scoped by object
+    prefix for exactly this reason; see `API Surface`.
+  - **A reply is not capped at one buffer.** The client reads in 16384-byte chunks, and whenever a
+    read fills the buffer it appends that chunk to a heap accumulator grown by `realloc` and reads
+    again, handing the assembled document to its parse callback only once a shorter read completes it
+    [`tcp_client.c:188-212`, dispatch at `:234`]. A reply spanning several chunks is delivered whole,
+    and neither schema nor the transport states a ceiling on its total size, so a caller must not
+    impose a 16384-byte expectation on a reply and must not assume a bound the transport does not
+    state. The practical limit is the memory the accumulation consumes in the caller's process.
 - **Do not reuse a request handle for a second send.** Correlation depends on each exchange carrying
   its own `reqId`, and the header helper allocates one per call.
 - **Zero-terminate every string placed in a request.** The parameter entry the manager fills is a
@@ -370,12 +471,16 @@ count rather than freeing unconditionally.
 
 #### Module Responsibilities
 
-- The client library owns the socket buffer and the reassembly of a message that spans several
-  reads. A caller never sees a partial document.
-- The library populates the reply handle only when it has a complete parsed document, and it
-  transfers that handle to the caller, who becomes responsible for releasing it.
-- The library owns the request-identifier counter and the tracking record for an outstanding
-  request, and releases that record when the exchange completes or expires.
+- The client library owns the receive buffer on the **reply** path and the assembly of a reply that
+  spans several reads [`tcp_client.c:188-212`], so a caller never sees a partial reply. The server
+  side of the transport provides no equivalent, which is why the size bound above applies to the
+  request direction only.
+- The library assigns the reply handle only after an exchange that returned a non-negative code, and
+  only from parsing the received buffer [`json_hal_client.c:691-693`]; it transfers that handle to the
+  caller, who becomes responsible for releasing it. It never releases, and never takes ownership of,
+  the caller's request handle.
+- The library owns the request-identifier counter and the per-request tracking record, and frees that
+  record when the exchange completes or expires [`json_hal_client.c:687-703`].
 - The vendor server owns everything on its side of the socket. It must not assume that a client
   which disconnected has released anything on its behalf, and it must be able to serve a fresh
   connection from a restarted manager.
@@ -411,55 +516,118 @@ this contract states nothing about the effect of writing them beyond the alarm b
 
 **One subscription mechanism, two message flows.** A caller subscribes with `subscribeEvent`, which
 the server acknowledges with a `result`; thereafter the server sends `publishEvent` messages
-unsolicited whenever the subscribed parameter meets the notification condition. A caller can
-enumerate what it is subscribed to with `getActiveSubscriptions`, answered by
-`getActiveSubscriptionsResponse`.
+unsolicited whenever the subscribed parameter meets the notification condition. There is no
+unsubscribe action.
 
-**Required fields differ between the two, which is the most common mistake in implementing them.**
+**A third flow is named in the vocabulary but carries nothing this contract defines.**
+`getActiveSubscriptions` and `getActiveSubscriptionsResponse` are members of the action enumeration
+in both schemas, so both are messages a conforming server must be able to parse, and both are
+documented here for that reason. What neither schema does is bind a payload to either of them: they
+appear in none of the eight `allOf` branches, so a valid `getActiveSubscriptionsResponse` is the bare
+four-field envelope and **the representation of an active-subscription list is undefined**. Any field
+a vendor adds to carry that list is outside the schema, is therefore neither validated nor
+constrained, and is vendor-specific by construction. The transport does not close the gap either: the
+pinned `json-hal-library` revision contains no occurrence of either action name, so it offers neither
+a request helper nor an accessor for a response. The practical consequence for a caller is that this
+exchange cannot be relied on to enumerate anything — **a caller tracks its own subscriptions
+locally**, which is what GponManager does implicitly by subscribing from a fixed list at startup
+[`source/GponManager/gponmgr_controller.c`], and treats any content it does receive as a
+vendor extension rather than as contract. [`halSpecDetailed.md`](halSpecDetailed.md) records the same
+finding as a contract defect.
+
+**Required fields differ between `subscribeEvent` and `publishEvent`, which is the most common
+mistake in implementing them.**
 A `subscribeEvent` parameter entry requires `name` and `notificationType` and carries no value. A
 `publishEvent` parameter entry requires `name`, `type` and `value` — the datatype travels with the
 event, so a receiver does not have to look the parameter up to interpret its value.
 
 **`notificationType` admits exactly two values: `interval` and `onChange`, with `onChange` as the
 default.** This is worth stating sharply because the transport library defines two further types,
-`onChangeSync` and `onChangeSyncTimeout`, behind its `JSON_BLOCKING_SUBSCRIBE_EVENT` compile guard.
+`onChangeSync` and `onChangeSyncTimeout`, behind its `JSON_BLOCKING_SUBSCRIBE_EVENT` compile guard
+[`json-rpc-common/json_rpc_common.h:53-56`].
 Those two belong to another `RDK-B` `JSON` HAL's contract, **not to this one**: neither appears in
 either GPON schema, so a subscription requesting one is not a valid message on this interface, and a
 vendor server implementing this contract need not support them. GponManager subscribes with
 `onChange` [`source/TR-181/middle_layer_src/gponmgr_dml_hal.h:43`].
 
-**The subscribable surface is exactly eighteen parameters, identical in both schema variants.** No
-other parameter may be subscribed, because `subscribeEvent` and `publishEvent` both bind their
-`params` items to `subscribeEventSupportedList` and to nothing else:
+**Eighteen parameters can be delivered as events, identical in both schema variants, and only two of
+them can be subscribed to.** The two halves of that sentence come from two different constraints and
+both matter. The outer bound is that `subscribeEvent` and `publishEvent` bind their `params` items to
+`subscribeEventSupportedList` and to nothing else, so no parameter outside those eighteen enters the
+event mechanism in either direction. The inner bound is that a `subscribeEvent` entry **requires**
+`notificationType`, every parameter definition declares `additionalProperties: false`, and only
+`ontPhysicalMediaStatus` and `ontVeipAdministrativeState` declare a `notificationType` property at
+all — so a `subscribeEvent` naming any of the other sixteen is an invalid message that a validating
+server rejects, while a `publishEvent` naming any of the eighteen is valid.
 
-| Group | Parameters |
-| --- | --- |
-| Optical status | `Device.X_RDK_ONT.PhysicalMedia.{i}.Status` |
-| Optical alarms (14) | `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.` `Rdi`, `Pee`, `Los`, `Lof`, `Dact`, `Dis`, `Mis`, `Mem`, `Suf`, `Sd`, `Sf`, `Lcdg`, `Tf`, `Rogue` |
-| Registration | `Device.X_RDK_ONT.Ploam.RegistrationState` |
-| `VEIP` state | `Device.X_RDK_ONT.Veip.{i}.AdministrativeState` and `.OperationalState` |
+| Group | Parameters | Valid in `subscribeEvent` |
+| --- | --- | --- |
+| Optical status | `Device.X_RDK_ONT.PhysicalMedia.{i}.Status` | **Yes** |
+| Optical alarms (14) | `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.` `RDI`, `PEE`, `LOS`, `LOF`, `DACT`, `DIS`, `MIS`, `MEM`, `SUF`, `SD`, `SF`, `LCDG`, `TF`, `ROGUE` | No — the definitions declare no `notificationType` property |
+| Registration | `Device.X_RDK_ONT.Ploam.RegistrationState` | No — same reason |
+| `VEIP` administrative state | `Device.X_RDK_ONT.Veip.{i}.AdministrativeState` | **Yes** |
+| `VEIP` operational state | `Device.X_RDK_ONT.Veip.{i}.OperationalState` | No — same reason |
 
 Each alarm carries `alarmEnumList`, so an event value is `Active` or `Inactive`; the optical status
 carries `statusEnumList`; the registration state carries its own nine-value enumeration. `Ploam`
-is a singleton so its path has no instance number, while `PhysicalMedia` and `Veip` are indexed.
-`State Diagram` enumerates every value each of these can take.
+is a singleton so its path has no instance number, while `PhysicalMedia` and `Veip` are indexed, and
+the alarm leaf names are upper case exactly as written above. `State Diagram` enumerates every value
+each of these can take.
+
+**What a caller does about the sixteen it cannot request.** The fourteen alarms,
+`Ploam.RegistrationState` and `Veip.{i}.OperationalState` can be *delivered* but not *requested*, so a
+caller obtains them either by polling with `getParameters` — which is available for all sixteen — or
+by relying on a vendor that publishes them without a subscription, which the schema permits and does
+not require. A caller must not treat the absence of events for those parameters as an indication that
+their value has not changed. This asymmetry is a defect in the shipped contract rather than a design
+choice, and [`halSpecDetailed.md`](halSpecDetailed.md) records it, together with the three
+subscriptions the manager itself issues that a validating server rejects for the same reason.
+
+**What an event handler may and may not do, restated here because this is where a caller meets it.**
+An event is delivered by calling the registered callback on the client's receive thread while the
+transport holds its subscription lock [`json_hal_client.c:427,440,472`], so the callback must copy
+anything it needs after it returns — the buffer it is given points into the event's own `JSON` object
+and is released as soon as dispatch finishes [`:435,516`] — must return promptly, and must not issue
+a synchronous HAL request, subscribe, re-subscribe or terminate the client from inside itself, each of
+which deadlocks rather than merely delaying. `Threading Model` sets out the mechanism and the evidence
+for each of those rules; a handler that parses the message, copies what it needs and hands it to a
+caller-owned thread satisfies all of them, and is what the manager's own handler does.
 
 **Delivery guarantees are not specified, and a caller must not assume them.** Nothing in either
 schema or in the transport states whether an event is delivered at least once, whether events are
 coalesced when a value changes twice quickly, whether a subscription survives a reconnection, or
 whether an initial value is published on subscription. A caller that needs current state should
-read it with `getParameters` rather than wait for an event, and should re-subscribe after any
-reconnection rather than assume the subscription persisted.
+read it with `getParameters` rather than wait for an event, and must not assume a subscription
+persisted across a reconnection.
+
+**Re-subscribing is the remedy for that, and it has a cost worth knowing before it is adopted.** The
+client's own subscription list is not cleared when the connection drops — only a full teardown clears
+it — and a second subscription for the same path is appended rather than replacing the first, so a
+callback registered twice is invoked twice per event. A caller that re-subscribes after every
+reconnection therefore needs either an idempotent handler or a full teardown and re-initialization of
+the client between attempts. [`halSpecDetailed.md`](halSpecDetailed.md) carries the mechanism and the
+locators.
+
+**Neither is a `result` on a subscription proof that the subscription exists.** The transport reports
+a completed exchange, not an accepted subscription: a `result` carrying `Failed`, `Invalid Argument`
+or `Not Supported` is reported to the caller as success, and the failure is not visible through the
+subscribe call at all. The only positive evidence that a subscription is live is the arrival of a
+`publishEvent`; [`halSpecDetailed.md`](halSpecDetailed.md) sets out what a caller can and cannot
+distinguish.
 
 **Vendor obligation.** A server must acknowledge every `subscribeEvent` with a `result` — silence
-costs the caller its full timeout — must publish only parameters that appear in the subscribable
-list above, and must send `publishEvent` with all three required fields populated, since a receiver
-has no other way to type the value.
+costs the caller its full timeout — must publish only parameters that appear in the table above, and
+must send `publishEvent` with all three required fields populated, since a receiver has no other way
+to type the value. A server must not require a `getActiveSubscriptions` exchange in order to
+establish or maintain a subscription, since the content of its response is undefined.
 
 *Derived from `definitions.subscribeEvent`, `definitions.publishEvent`,
-`definitions.subscribeEventSupportedList` and `definitions.notificationType` in both files under
-`hal_schema/`; `source/TR-181/middle_layer_src/gponmgr_dml_hal.h:43` and
-`gponmgr_dml_hal.c:1389-1396`; and `json_rpc_common.h:52-56` at the pinned transport revision.*
+`definitions.subscribeEventSupportedList`, `definitions.notificationType` and the eight `allOf`
+branches in both files under `hal_schema/`, with `notificationType` property membership verified per
+definition; `source/TR-181/middle_layer_src/gponmgr_dml_hal.h:43`,
+`gponmgr_dml_hal.c:1389-1396` and `source/GponManager/gponmgr_controller.c`; and
+`json_rpc_common.h:52-56` plus the absence of either active-subscription action name anywhere in the
+pinned transport revision.*
 
 ### Blocking calls
 
@@ -468,24 +636,55 @@ calls block; this interface is the opposite, and a caller coming from a C HAL mu
 send-and-reply call blocks the calling thread until the server answers or the wait expires, so HAL
 requests must not be issued from a thread with latency obligations of its own.
 
-**The wait is counted in ticks and clamped at both ends, and the floor is the part that surprises
-callers.** The transport waits in 250-millisecond ticks. The untimed form passes a fixed 40 ticks,
-which is exactly **10 seconds**. The timed form converts the caller's request into ticks and then
-bounds it: fewer than 40 ticks is raised to 40, and more than 480 is reduced to 480 — a ceiling of
-exactly **120 seconds**.
+**The wait is budgeted in ticks rather than in seconds, and it is clamped at both ends.** A tick is
+one pass of the client's receive loop, not a unit of time. The untimed form passes a fixed budget of
+40 ticks [`json_hal_client.c:35,614`]. The timed form converts the caller's request at four ticks per
+second and then bounds it: fewer than 40 ticks is raised to 40, and more than 480 is reduced to 480
+[`:589-598`]. So the clamp a caller is subject to is a floor of 40 ticks and a ceiling of 480 ticks,
+which on an otherwise quiet connection correspond to **about 10 seconds and about 120 seconds**.
 
-| Requested wait | Effective wait | Why |
+| Requested wait | Effective budget | Why |
 | --- | --- | --- |
-| The untimed form | exactly 10 seconds | It passes the floor value, so it is the *shortest*-waiting form rather than an unbounded one. |
-| Under 10 seconds | 10 seconds | Raised to the tick floor. A short timeout is not honoured, and asking for 2 seconds still costs 10. |
-| 10 to 120 seconds | as requested | Between floor and ceiling, so used as given, rounded to a whole 250-millisecond tick. |
-| Over 120 seconds | 120 seconds | Reduced to the ceiling. Asking for 300 seconds gives 120. |
+| The untimed form | 40 ticks, nominally about 10 seconds | It passes the floor value, so it is the *shortest*-waiting form rather than an unbounded one. |
+| Under 10 seconds | 40 ticks | Raised to the tick floor. A short timeout is not honoured, and asking for 2 seconds still costs the floor. |
+| 10 to 120 seconds | the requested seconds, converted at four ticks per second | Between floor and ceiling, so used as given. The argument is a whole number of seconds, so the conversion is exact. |
+| Over 120 seconds | 480 ticks, nominally about 120 seconds | Reduced to the ceiling. Asking for 300 seconds gives the ceiling. |
+
+**Why those figures are nominal budgets and not deadlines.** The calling thread's own wait is
+untimed: it blocks on its request record's condition variable with no deadline attached
+[`json_hal_client.c:683`], so nothing in the calling thread measures elapsed time. What ends the wait
+is either a matching reply or the ticker, and the ticker is a countdown of loop passes, not of
+milliseconds: the idle callback decrements each pending request's tick count by one per invocation
+and signals the request once it reaches zero [`json_hal_client.c:535-556`, reached through
+`request_idle_cb()` at `:227-232`]. The receive loop calls that idle callback once per pass, and only
+when no partial message is being held [`tcp_client.c:251-253`]. Three consequences follow, and a
+caller should size its own expectations against them rather than against a stopwatch:
+
+- **A quiet connection is where the arithmetic holds.** A pass that finds nothing to read waits out
+  the loop's 250-millisecond `select` window and then sleeps 2 milliseconds
+  [`tcp_client.c:175-178`, `LOOP_TIMEOUT` at `tcp_client.h:35`, `IDLE_TIMEOUT_PERIOD` at
+  `json_rpc_common.h:91`], so 40 such passes take roughly 10 seconds and 480 roughly 120.
+- **Traffic retires ticks faster than the clock.** A pass that finds data to read returns as soon as
+  `select` reports it, so the pass costs the processing time and the 2-millisecond sleep rather than
+  the full window. On a busy connection — another subscription's events, or another thread's replies
+  — the same 40 ticks can be spent in well under 10 seconds, which is the direction that matters: the
+  budget can expire *earlier* than the nominal figure, not only later.
+- **A reassembly in progress retires no ticks at all.** A reply larger than the 16384-byte receive
+  buffer is accumulated across passes [`tcp_client.c:191-212`, `MAX_BUFFER_SIZE` at
+  `json_rpc_common.h:87`], and while that partial buffer is held the idle callback is skipped
+  [`tcp_client.c:251`], so no pending request's countdown advances. A large reply therefore defers
+  every waiting request's expiry for as long as it takes to assemble.
+
+The practical reading for a caller: treat the floor and ceiling as approximate budgets that bound the
+wait in ordinary operation — a request does not wait indefinitely while the loop is servicing its
+ticker — but do not build a timing assertion, a watchdog margin or a retry schedule on 10 or 120
+seconds as though either were a guaranteed elapsed time.
 
 **GponManager uses only the untimed form**, at eight send sites — one for the set path and one for
 each of the seven object-prefix reads
 [`source/TR-181/middle_layer_src/gponmgr_dml_hal.c:264`, `:741`, `:806`, `:873`, `:941`, `:1001`,
-`:1080`, `:1165`]. Every HAL exchange this manager performs therefore has a 10-second budget, and a
-caller wanting longer must use the timed form deliberately.
+`:1080`, `:1165`]. Every HAL exchange this manager performs therefore carries the 40-tick floor, and
+a caller wanting a larger budget must use the timed form deliberately.
 
 **Connection establishment blocks for its own bounded window**, up to ten one-second attempts, as
 `Initialization and Startup` sets out. The worst case for a cold start is that window followed by
@@ -494,16 +693,17 @@ the first request's wait.
 **Nothing on this interface is asynchronous except event delivery.** There is no request handle to
 poll, no completion callback for a request, and no way to cancel one in flight. A caller needing
 concurrency gets it by not calling from a latency-sensitive thread, not by a non-blocking form of
-these calls — and, as `Threading Model` notes, additional threads queue behind the library mutex
-rather than overlapping.
+these calls — and, as `Threading Model` records, whether two requests may be in flight at once is not
+established by this interface, so extra threads are not a supported way to overlap them.
 
 **Vendor obligation.** A server must answer every request it receives, including one it cannot
 satisfy. An unanswered request costs the caller its full wait and yields no information, whereas a
 prompt `result` carrying `Failed`, `Invalid Argument` or `Not Supported` costs a round trip and tells
 the caller what happened.
 
-*Derived from `tcp_client.h:35`, `json_hal_client.c:35,589-598,614` at the pinned transport revision
-cited in `Build Requirements`, and the eight send sites listed above in
+*Derived from `tcp_client.h:35`, `tcp_client.c:175-178,191-212,251-253`,
+`json_hal_client.c:35,227-232,535-556,589-598,614,683` and `json_rpc_common.h:87,91` at the pinned
+transport revision cited in `Build Requirements`, and the eight send sites listed above in
 `source/TR-181/middle_layer_src/gponmgr_dml_hal.c`.*
 
 ### Internal Error Handling
@@ -540,6 +740,15 @@ contains a space, as does `Not Supported`; neither is camel-cased.
 `setParametersResponse` in this protocol. `API Surface` states this in full, because assuming
 otherwise is the single most common misreading of this interface.
 
+**One action's status cannot be read at all, and the table above therefore does not apply to it.** A
+`subscribeEvent` is acknowledged by `result` like a write, but the transport call that sends it
+releases the reply before returning and never inspects `Result.Status`, so a subscription refused with
+`Failed`, `Invalid Argument` or `Not Supported` is reported to the caller exactly as an accepted one
+is. A caller cannot act on the status of a subscription, and must instead treat the arrival of a
+`publishEvent` as the only evidence that one is live;
+`Asynchronous Notification Model` and [`halSpecDetailed.md`](halSpecDetailed.md) set out what is and
+is not distinguishable.
+
 **How the manager treats the status, as a worked reference.** The set path reads the status and
 treats anything other than success as a failure of the whole operation, logging the parameter name
 [`source/TR-181/middle_layer_src/gponmgr_dml_hal.c:272-286`]; a failure to extract a status at all is
@@ -550,7 +759,8 @@ defaulting to `Failed` for every refusal — the caller's correct response diffe
 must not report `Success` for a write it did not apply.
 
 *Derived from `definitions.resultStatusEnumList` and `definitions.result` in both files under
-`hal_schema/`; `json_rpc_common.h:57` and `json_hal_client.h` at the pinned transport revision; and
+`hal_schema/`; `json_rpc_common.h:57`, `json_hal_client.h` and
+`json_hal_client.c:707-746,906-945` at the pinned transport revision; and
 `source/TR-181/middle_layer_src/gponmgr_dml_hal.c:264-290`.*
 
 ### Persistence Model
@@ -562,14 +772,43 @@ distinguishes a value that was applied from one that was applied and stored. A c
 durability from a `Success` result, and should re-apply any value it needs to hold after a restart on
 either side of the socket.
 
-**What the interface does define is correlation state, and it is per-connection rather than
-persistent.** Requests are matched to replies by `reqId`, a client-side counter that starts at 100,
-increments once per request header and wraps back to its start value on overflow. The identifier is
-formatted as a zero-padded eight-digit decimal string, so the first request of a fresh client carries
-`"00000101"`, which satisfies the envelope's `^[0-9]+$` constraint. Two consequences: the counter is
-**not** stable across a client restart, so a `reqId` must never be used as a durable key for
-anything; and a server must correlate on the identifier it was sent rather than on arrival order,
-because that is the only thing the client checks a reply against.
+**What the interface does define is correlation state, and its scope is the client *process*, not the
+connection.** Requests are matched to replies by `reqId`, which the client derives from a single
+counter held in a process-global variable initialised to 100
+[`json_hal_client.c:42`, `DEFAULT_SEQ_START_NUMBER` at `json_rpc_common.h:89`]. Each request header
+increments it once and formats the result as a decimal string zero-padded to a minimum of eight
+digits, widening rather than truncating once the value needs more
+[`json_hal_client.c:851-852`], so the first request a freshly started process sends carries
+`"00000101"`, which satisfies the envelope's `^[0-9]+$` constraint. Four properties matter to a caller
+and to a test author, and three of them contradict what a "per-connection sequence number" would
+imply:
+
+- **The counter survives a reconnection.** Losing and re-establishing the socket only changes the
+  connected flag [`json_hal_client.c:234-246`]; nothing resets the counter, so identifiers continue
+  from where they left off and a server must not expect a fresh sequence after a client reconnects.
+- **It survives a teardown and re-initialization inside the same process.**
+  `json_hal_client_terminate()` frees the pending-request and subscription lists
+  [`json_hal_client.c:754-816`] and leaves the counter untouched.
+- **It is reset only by a client process restart**, which is why a `reqId` must never be used as a
+  durable key for anything, and why two different runs of a client will reuse identifiers.
+- **This interface does not specify what happens when the counter reaches the upper bound of its
+  type, and a caller must not assume any particular behaviour there — neither a wrap nor continued
+  growth.** The counter is a signed `int` [`json_hal_client.c:42`], and the increment carries a guard
+  intended to return it to its start value; but the guard compares that signed `int` against
+  `INT_MAX` *after* incrementing it [`json_hal_client.c:959-966`], a comparison that cannot become
+  true for a value of that type, so the reset it was written for cannot fire. What the increment
+  itself does at that bound is not defined by the language, so nothing establishes the next
+  identifier: it is not established to wrap, not established to keep rising, and not established to
+  remain a sequence of digits — the value is formatted through a signed conversion
+  [`json_hal_client.c:848-852`], and a value that is not positive would not satisfy the envelope's
+  own `^[0-9]+$` constraint. Reaching the bound takes on the order of two thousand million requests
+  from one client process, so the practical exposure is remote; the documentation consequence is not.
+  A test must not assert a wrap, a server must not assume a bounded numeric range, and neither side
+  should treat the identifier as anything other than an opaque token to be echoed back.
+
+The correlation obligation itself is unchanged by any of this: a server must answer on the identifier
+it was sent rather than on arrival order, because that is the only thing the client checks a reply
+against.
 
 **Nothing on the wire is cached, but the manager caches above it, and a caller reading through the
 `DML` sees the result.** GponManager suppresses a re-read of an object it fetched less than
@@ -585,8 +824,8 @@ earlier internal poll, or must document its own sampling interval — this contr
 caller cannot otherwise know how stale a counter is.
 
 *Derived from `properties.reqId` in both files under `hal_schema/`;
-`json_hal_client.c:42,840-859,959-966` and `json_rpc_common.h:89` at the pinned transport revision;
-and `source/TR-181/middle_layer_src/gponmgr_dml_hal.c:72,727,793,859,927`.*
+`json_hal_client.c:42,234-246,754-816,840-873,959-966` and `json_rpc_common.h:89` at the pinned
+transport revision; and `source/TR-181/middle_layer_src/gponmgr_dml_hal.c:72,727,793,859,927`.*
 
 ## Non functional requirements
 
@@ -636,16 +875,73 @@ Two facts about the code paths on the manager's side of the socket:
   after a failed exchange should check the process's standard error before concluding that nothing was
   logged.
 
-**Debugging the wire itself.** Because both participants are separate processes on the loopback
-interface, an exchange can be observed without instrumenting either: the messages are `JSON`
-documents on `TCP` port `40100`. Each is self-describing — the envelope names the module, the schema
-version, the action and the correlation identifier — so a captured message can be validated against
-the shipped schema directly, which is the check `Quality Control` recommends.
+**Handling of identifying values in log, trace and debug output.** This contract declares no password,
+key or token parameter — a fact worth stating plainly, because it means nothing here needs to be
+handled as an authentication secret. What it does carry is permanent device identity and one operator
+infrastructure locator, and those are the values a log must not leak:
+`Device.X_RDK_ONT.Ploam.SerialNumber`, `Device.X_RDK_ONT.Ploam.OnuId` and
+`Device.X_RDK_ONT.Ploam.VendorId` identify one `ONU` on a shared optical medium;
+`Device.X_RDK_ONT.PhysicalMedia.{i}.ModuleName` and `.ModuleVendor` identify its optical module; and
+`Device.X_RDK_ONT.TR69.url` is the address of the operator's auto-configuration server, and a `URI` is
+a form that can carry credentials in its userinfo component. The requirements below are therefore
+**normative** for this interface and
+bind the vendor server and the `RDK-B` caller equally. They are stated here because the interface
+declares no redaction helper, no sensitivity marker on a parameter definition and no way to ask the
+transport to suppress a value, so nothing enforces them mechanically.
+
+- **No identifying value is written to log output at any severity.** Neither side may write a serial
+  number, an `ONU-ID`, a vendor identifier, an optical-module identity or an `ACS` `URL` — whole,
+  truncated, encoded or hashed — to `syslog`, to a vendor log file, to standard output, to standard
+  error or to any trace buffer, at any level in the ladder above, `DEBUG` and `TRACE` included. A
+  value that is too sensitive for `INFO` is not made acceptable by lowering the severity, and a build
+  that turns verbose logging on must not become a build that publishes device identity.
+- **A message that must refer to such a value names the parameter and redacts the value.** A
+  diagnostic records the action, the `TR-181` path and the outcome — that a `setParameters` on
+  `Device.X_RDK_ONT.TR69.url` was refused, for instance — never the value. A **fixed** redaction
+  marker is used, identical for every value: no leading or trailing fragment, no first or last octet,
+  no length and no hash, because a fragment or a length narrows a search across a fleet of devices
+  whose serial numbers share a vendor prefix.
+- **Identifying values are excluded from crash artefacts and telemetry.** A core dump, a
+  post-mortem trace, a bug-report bundle or a telemetry upload must not carry any of them, whether as
+  a parameter value, as part of a captured message, or in a buffer left behind by a failed exchange.
+  A vendor that cannot exclude them from a core file must disable core files for the server process on
+  a production build rather than ship the exposure.
+- **Buffers holding an identifying value are cleared once the value has been used.** A caller
+  overwrites its copy of a serial number or an `ACS` `URL` when it has finished with it, on every path
+  including the failure path, and releases the reply handle that produced it as `Memory Model`
+  requires. Neither side copies such a value into an environment variable, a command line, a
+  configuration file it did not already own, or a cache that outlives the exchange.
+- **Raw message tracing exists in the transport, so the rule above cannot be met by choosing a
+  severity — it must be met by build and deployment configuration.** The transport's logging macros
+  write straight to standard error, unconditionally and with no level filter and no redaction
+  [`json_rpc_common.h:94-98`]. What they emit by default carries a subscribed parameter's **path**
+  rather than its value — the pinned client logs the whole subscription message
+  [`json_hal_client.c:717`] — but building either side with `DEBUG_ENABLED` promotes that to whole
+  documents *with values*: the complete event message on the client
+  [`json_hal_client.c:437-439`] and the complete outbound response on the server
+  [`tcp_server.c:71-73`], either of which may carry the rows named above. A production build must
+  therefore not define `DEBUG_ENABLED`, and any deployment that captures a process's standard error
+  must treat that stream as carrying device identity and protect it accordingly.
+- **The interface guarantees none of this.** There is no way for a caller to verify that a vendor
+  server observes these rules, so compliance is established by inspection or by contract and must not
+  be assumed.
+
+**Debugging the wire itself, and the constraint that comes with it.** Because both participants are
+separate processes on the loopback interface, an exchange can be observed without instrumenting
+either: the messages are `JSON` documents on `TCP` port `40100`. Each is self-describing — the
+envelope names the module, the schema version, the action and the correlation identifier — so a
+captured message can be validated against the shipped schema directly, which is the check
+`Quality Control` recommends. A capture is nonetheless a copy of everything the values above contain:
+it is a debugging artefact for a lab or a development build, is subject to the same redaction and
+retention rules, and must not be attached to a defect report, uploaded as telemetry or left on a
+device after use.
 
 *Derived from `source/TR-181/middle_layer_src/gponmgr_dml_hal.c:39-44,113,119,147,266,280,285`;
-`json_rpc_common.h:94-98` at the pinned transport revision; the absence of any logging requirement in
-both files under `hal_schema/` and in `config/`; and the register of
-`rdkb-halif-moca/docs/pages/halSpec.md`.*
+`json_rpc_common.h:94-98`, `json_hal_client.c:437-439,717` and `tcp_server.c:71-73` at the pinned
+transport revision; the `Ploam`, `PhysicalMedia` and `TR69` parameter definitions in both files under
+`hal_schema/`; the absence of any logging, redaction or sensitivity requirement in those files and in
+`config/`; and the register of `rdkb-halif-moca/docs/pages/halSpec.md` and
+`rdkb-halif-mso/docs/pages/halSpec.md`.*
 
 ### Memory and performance requirements
 
@@ -660,29 +956,32 @@ allocation policy cannot affect the caller's heap.
 
 | Limit | Value | Where it comes from |
 | --- | --- | --- |
-| Transport receive buffer | 16384 bytes per read, reassembled across reads for a larger message | `MAX_BUFFER_SIZE`, transport library |
-| Synchronous reply window | 10 seconds floor, 120 seconds ceiling | Tick clamp, transport library; see `Blocking calls` |
+| Request size | 16384 bytes, the server's single fixed receive buffer | `MAX_BUFFER_SIZE` [`json_rpc_common.h:87`], read at `tcp_server.c:106,219,262`; a larger request is not assembled and is discarded unanswered |
+| Reply size | no stated ceiling; assembled on the heap from 16384-byte reads | `tcp_client.c:188-212`; see `Memory Model` |
+| Synchronous reply window | 40-tick floor, 480-tick ceiling — nominally about 10 and 120 seconds | Tick clamp, transport library; the elapsed time is approximate, see `Blocking calls` |
 | Connection establishment window | 10 attempts, 1 second apart | `HAL_CONNECTION_RETRY_MAX_COUNT`, manager |
 | Server listen backlog | 32 | Transport library server |
 | Manager-side re-read suppression | 10 seconds per cached object | `DML_GTC_FETCH_INTERVAL`, manager |
-| Outstanding requests per client | one at a time, serialised by the library mutex | Transport library; see `Threading Model` |
+| Outstanding requests per client | not specified; the client takes a mutex per request, not per exchange | `json_hal_client.c:635,655-658,665`; see `Threading Model` |
 
 **No memory footprint limit and no CPU budget are specified for this interface.** Neither schema, the
 client configuration nor the manager source states a resident-memory ceiling, a per-request CPU
 budget or a throughput target for a vendor server, and this document does not invent one. A vendor
 should size its implementation against the product specification for the platform it ships on. What
 *is* specified, and is the practical performance contract, is the reply window above: a server that
-cannot answer inside 10 seconds will have its caller time out on the untimed form that GponManager
-uses everywhere.
+cannot answer within the 40-tick floor — nominally about 10 seconds, and less than that on a busy
+connection — will have its caller time out on the untimed form that GponManager uses everywhere.
 
-**One performance consequence of the model worth planning for.** Because requests serialise and each
-carries a full round trip, the cost of reading the `ONT` is dominated by the number of requests
-rather than by their size. The manager reads by object prefix — seven requests for the whole tree
+**One performance consequence of the model worth planning for.** Because each request carries a full
+round trip and a caller is advised to issue them one at a time for the reason `Threading Model` gives,
+the cost of reading the `ONT` is dominated by the number of requests rather than by their size. The manager reads by object prefix — seven requests for the whole tree
 rather than one per parameter [`source/TR-181/middle_layer_src/gponmgr_dml_hal.c:737,802,869,937,997,1076,1161`] —
-and a caller should follow the same pattern within the 16 KiB limit.
+and a caller should follow the same pattern, keeping each request inside the 16384-byte request bound
+above rather than inside any assumed reply bound, since only the request direction has one.
 
-*Derived from `json_rpc_common.h:87`, `tcp_client.h:35`, `json_hal_client.c:35,589-598`,
-`tcp_server.c:155` at the pinned transport revision; and
+*Derived from `json-rpc-common/json_rpc_common.h:87`, `tcp_server.c:106,155,219,262`,
+`tcp_client.c:59-79,188-212`, `tcp_client.h:35`, `json_hal_client.c:35,589-598`,
+`json_hal_server.c:336,591` at the pinned transport revision; and
 `source/TR-181/middle_layer_src/gponmgr_dml_hal.c:37,72,737-1161`.*
 
 ### Quality Control
@@ -801,8 +1100,8 @@ cannot be performed without correct supported version."* The schema file as a wh
 instruction at its top level: *"DO NOT modify the contents of this schema file. RDK community team
 make necessary changes and release."* Adjusting the interface is an architecture decision released
 through this repository; a vendor aligns its implementation with a released version of the contract
-rather than editing the deployed file. Each released interface is versioned per
-[Semantic Versioning 2.0.0](https://semver.org/).
+rather than editing the deployed file. Each released interface is versioned per Semantic Versioning
+2.0.0.
 
 **Selection of the variant is two steps, and both must be understood to know which contract a build
 speaks.** Step one is a compile-time flag that picks the *configuration file*
@@ -880,8 +1179,9 @@ paths it reads and writes only when the flag is set
 configuration, schema, writable surface and manager code all move together, and there is no build in
 which the manager addresses a parameter its schema does not declare.
 
-**What the flag does not change.** The action vocabulary, the envelope, the eighteen subscribable
-parameters, the nine enumerations, the object segments and their instance-path forms, the port, the
+**What the flag does not change.** The action vocabulary, the envelope, the eighteen entries in
+`subscribeEventSupportedList` and which two of them admit `notificationType`, the nine
+enumerations, the object segments and their instance-path forms, the port, the
 `moduleName` and the `schemaVersion` are identical in both variants. A vendor server can therefore be
 written once against the variant schema and serve both builds, provided it answers `Not Supported`
 rather than failing when asked for a parameter the deployed schema does not include.
@@ -940,9 +1240,12 @@ enumerating a table: a read of a singleton object's path returns its parameters,
 object's parameters are addressed per instance number.
 
 **Subscriptions are the only client-created state on the server side**, established by
-`subscribeEvent` and enumerable with `getActiveSubscriptions`. There is no unsubscribe action in the
-vocabulary, and neither schema states whether a subscription outlives a reconnection, so a caller
-should re-subscribe after any reconnection as `Asynchronous Notification Model` advises.
+`subscribeEvent`. Their lifecycle is barely specified: there is no unsubscribe action in the
+vocabulary, neither schema states whether a subscription outlives a reconnection, and the one action
+that appears to read the state back — `getActiveSubscriptions` — has a response whose content this
+contract does not define, so it cannot be used to confirm what the server holds. A caller therefore
+keeps its own record of what it subscribed to, and re-subscribes after a reconnection subject to the
+duplicate-delivery caveat `Asynchronous Notification Model` sets out.
 
 #### Method Sequencing
 
@@ -957,14 +1260,46 @@ to detect a mismatch between the two sides. A caller must not assume the returne
 own: one of the shipped example responses returns a path belonging to a different HAL entirely, which
 is exactly the mismatch this action exists to reveal.
 
-**`subscribeEvent` before any `publishEvent` can arrive.** Events are not sent for parameters that
-were never subscribed, and only the eighteen parameters listed in
-`Asynchronous Notification Model` may be subscribed.
+**The path that action returns is untrusted input, and its only safe use is comparison.**
+`SchemaInfo.FilePath` is a string the peer process chooses, and the schema constrains it to the shape
+of a path and nothing more — `^(.+)/([^/]+)$` matches any two non-empty segments, so a traversal
+sequence, an absolute path outside `/etc/rdk/schemas/`, a path naming another HAL's contract or a
+string carrying shell metacharacters all satisfy it. The value therefore establishes what the server
+*claims*, never what the client should act on. Three rules follow, and they are normative:
+
+- **Compare, do not dereference.** The returned string is compared, as an exact byte string, against
+  the schema path the client's own configuration file names — `/etc/rdk/schemas/gpon_hal_schema.json`
+  or `/etc/rdk/schemas/gpon_wan_unify_hal_schema.json`, the two values this deployment permits, as
+  `Optional Components` and `Variability Management` set out. A caller must not open it, stat it,
+  load a schema from it, pass it to a shell, a loader or a file-name-taking library call, or
+  interpolate it into a path, a command line or a `URL`.
+- **Treat any value outside that pair as a mismatch to report, not a path to follow.** An unequal
+  comparison means the two sides are running different contracts, which is the condition this action
+  exists to detect; the correct response is to log the mismatch with the value redacted per
+  `Logging and debugging requirements`, and to continue against the client's own configured schema or
+  to fail initialization, never to adopt the server's path.
+- **Do not echo it.** The value is a peer-supplied string, so reproducing it in a log line, a `DML`
+  parameter, a telemetry field or an operator-visible message propagates whatever the peer put there.
+
+The shipped `hal_schema/example_getSchemaResponse_msg.json` demonstrates the case: it validates and
+returns `/etc/rdk/hal_schemas/xtm_hal_schema.json`, a directory no `GPON` configuration names and a
+contract belonging to another HAL. A caller that dereferenced it would load the wrong schema from a
+path a peer chose; a caller that compares it detects a misconfigured deployment.
+[`halSpecDetailed.md`](halSpecDetailed.md) publishes the corrected exchange.
+
+**`subscribeEvent` before any `publishEvent` can arrive.** An event is not sent for a parameter that
+was never subscribed, and only a parameter in the eighteen-entry table in
+`Asynchronous Notification Model` enters the event mechanism at all. Of those eighteen, only the
+optical status and the `VEIP` administrative state can be named in a `subscribeEvent` a validating
+server accepts, so for the remaining sixteen there is no sequence that reliably produces an event and
+a caller polls instead.
 
 **Reads and writes are otherwise unordered**, with two qualifications. A write is not read-back: the
 `result` acknowledging a `setParameters` reports acceptance, not the settled value, so a caller that
-needs the settled value reads it afterwards. And requests serialise on the client mutex, so
-"concurrent" reads from several threads execute one after another, as `Threading Model` describes.
+needs the settled value reads it afterwards. And ordering between requests issued from different
+threads is not established by this interface, so a caller that needs one request to precede another
+issues them from one thread rather than relying on the client to sequence them, as
+`Threading Model` describes.
 
 #### State-Dependent Behavior
 
@@ -1238,8 +1573,12 @@ the absence of a transition model is stated rather than papered over.
 | `Active`, `Standby` | `redundancyStateEnumList`, used by `Device.X_RDK_ONT.PhysicalMedia.{i}.RedundancyState` | Which of a redundant pair of optical interfaces is in service |
 
 `Device.X_RDK_ONT.Veip.{i}.OperationalState` is likewise enumerated, and every value above is
-readable with `getParameters`; the first three rows are also subscribable, as
-`Asynchronous Notification Model` lists.
+readable with `getParameters`. Their availability as *events* is narrower and is not uniform across
+the table: the optical status, the registration state, the fourteen alarms and both `VEIP` states can
+be delivered by `publishEvent`, `RedundancyState` cannot be delivered at all because it is not in
+`subscribeEventSupportedList`, and only the optical status and the `VEIP` administrative state can be
+named in a `subscribeEvent` — the distinction `Asynchronous Notification Model` sets out per
+parameter.
 
 **Transitions between the values above are not specified by this interface.** A caller must not
 infer an ordering, a precedence or a legal successor from the value sets: the schemas say which

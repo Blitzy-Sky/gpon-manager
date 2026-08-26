@@ -2,13 +2,14 @@
 
 All notable changes to `gpon-manager` are documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
-repository adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format follows the Keep a Changelog 1.1.0 convention, and this repository adheres to Semantic
+Versioning 2.0.0.
 
 Every release heading below names a tag that exists in this repository, and its date is the date of
-the tag. A `git describe --tags` string such as `v1.7.0-7-g1e7d2f6` denotes a number of commits past
-a tag rather than a release, so it never appears here as a release heading. Work that is not yet
-tagged is listed under `Unreleased`.
+the tag: the tagger date where the tag is annotated, and the tagged commit's date for `v1.1.0` and
+`v1.0.0`, which are lightweight tags carrying no tagger date of their own. A `git describe --tags`
+string denotes a number of commits past a tag rather than a release, so no such string appears here
+as a release heading. Work that is not yet tagged is listed under `Unreleased`.
 
 Two version numbers travel with this repository, and they are not the same kind of thing:
 
@@ -22,16 +23,42 @@ Two version numbers travel with this repository, and they are not the same kind 
 
 ## Unreleased
 
-Changes that are merged but not yet part of a tagged release
-([compare with v1.7.0](https://github.com/rdkcentral/gpon-manager/compare/v1.7.0...HEAD)).
+Changes made since the `v1.7.0` tag and not yet part of a tagged release. All of it is documentation:
+no interface contract, configuration file or source file was modified, so the component's behaviour
+and its `TR-181` surface are unchanged.
 
 ### Added
 
-- `docs/pages/CHANGELOG.md` - a symlink to this file, so the repository's release history renders
-  alongside the HAL documentation in the generated Doxygen site.
+- `docs/pages/halSpec.md` - the `GPON` `JSON` HAL interface specification. It covers the architecture,
+  initialization and startup order, the threading, process and memory models, blocking behaviour,
+  asynchronous notification, persistence, the non-functional requirements, and the complete action and
+  object surface, and it records which actions are unusable under the shipped schemas. This repository
+  had no HAL documentation before it.
+- `docs/pages/halSpecDetailed.md` - the per-parameter reference, which for a schema carries the depth
+  that inline Doxygen carries for a C header. It documents all 90 parameter definitions of
+  `hal_schema/gpon_hal_schema.json` and all 95 of `hal_schema/gpon_wan_unify_hal_schema.json` with
+  type, constraint, access and description, marking each variant-only parameter in place, alongside the
+  26 object definitions, the transport and protocol contract, the deployment contract, the enumeration
+  appendix, worked message examples for five protocol workflows, the error model, the event model, and
+  the defects the shipped schemas contain.
+- `docs/generate_docs.sh` - the documentation build script, pinning the `rdkcentral/hal-doxygen`
+  generator at tag `1.2.0` and passing `PROJECT_NAME="RDK-B GPON HAL"`.
+- `docs/.gitignore` - excludes the cloned generator in `docs/build` and the generated site in
+  `docs/output` from version control.
+- `docs/pages/CHANGELOG.md`, `CONTRIBUTING.md`, `COPYING.md`, `LICENSE.md` and `NOTICE.md` - five
+  symlinks to the corresponding files in the repository root, so the release history, the contribution
+  guidance and the legal text render alongside the HAL documentation in the generated site.
 - This `CHANGELOG.md`, the release-history record for the repository and the source for the
   `Version History` topic of the HAL specification. The repository had no changelog before this
   entry.
+
+### Changed
+
+- `README.md` - replaced the single-line stub that stood at `v1.7.0` with a manager overview: what
+  `RdkGponManager` owns, why this HAL is a `JSON` Schema rather than a C header, links to both
+  documentation pages, the module identity and object tree, the two-step build-time variant selection,
+  the repository layout, the build options and the contribution route. Every factual claim names the
+  file that establishes it.
 
 ## Releases before this file
 
