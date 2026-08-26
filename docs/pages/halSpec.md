@@ -269,15 +269,16 @@ the caller; the manager's callback parses the message and hands the result to th
 component rather than mutating shared state in place.
 
 **A callback runs on the receive thread with the transport's subscription lock held, which makes two
-ordinary-looking things inside a handler deadlock outright.** The pinned client dispatches an event from
-`response_parse_cb()`, which the socket thread calls for each document it receives
-[`json_hal_client.c:335`, invoked at `tcp_client.c:234`]. **That name, and `request_idle_cb()` in the
-rules below, are source-internal implementation details of the transport rather than part of any
-callable surface**: both are declared `static` inside `json_hal_client.c` [`:128` and `:104`
-respectively], appear in no transport header, and are reachable only as function pointers the client
-installs on itself [`:208-211`]. They are named because the behaviour they implement is the contract a
-caller's handler must satisfy, so a reader who needs to confirm a rule below can find it at the cited
-line — not because there is anything to call. The entry points a caller does call are the ones listed
+ordinary-looking things inside a handler deadlock outright.** The pinned client dispatches an event
+from its internal receive-dispatch callback, which the socket thread calls for each document it
+receives [`json_hal_client.c:335`, invoked at `tcp_client.c:234`]. **That callback, and the internal
+idle callback the rules below depend on, are source-internal implementation details of the transport
+rather than part of any callable surface**: both are declared `static` inside `json_hal_client.c`
+[`:128` and `:104` respectively], appear in no transport header, and are reachable only as function
+pointers the client installs on itself [`:208-211`]. They are cited by location, rather than named as
+identifiers, because the behaviour they implement is the contract a caller's handler must satisfy, so
+a reader who needs to confirm a rule below can find it at the cited line — while a caller can neither
+call, link against nor replace either one. The entry points a caller does call are the ones listed
 under `Initialization and Startup`, every one of them declared by a transport header. The event branch
 takes `gm_event_tracking_lock`, walks the subscription list and invokes the registered callback **with
 that lock still held**, releasing it only after the callback returns
@@ -286,8 +287,8 @@ that lock still held**, releasing it only after the callback returns
 
 - **Do not make a synchronous HAL call from inside a callback.** A send waits on the condition
   variable of its own request record [`json_hal_client.c:683`], and the only thread that can signal
-  that variable — on a reply [`:495-513`] or on the timeout tick [`:537-553`, driven from
-  `request_idle_cb()` at `:227-232`, which the same socket loop calls at `tcp_client.c:251-253`] — is
+  that variable — on a reply [`:495-513`] or on the timeout tick [`:537-553`, driven from the
+  internal idle callback at `:227-232`, which the same socket loop calls at `tcp_client.c:251-253`] — is
   the thread the callback is currently occupying. The wait therefore cannot be satisfied and cannot
   even expire: it is a deadlock, not a slow call that recovers when the tick budget
   `Blocking calls` describes runs out. Work that needs a HAL request is queued to a
@@ -655,8 +656,8 @@ untimed: it blocks on its request record's condition variable with no deadline a
 [`json_hal_client.c:683`], so nothing in the calling thread measures elapsed time. What ends the wait
 is either a matching reply or the ticker, and the ticker is a countdown of loop passes, not of
 milliseconds: the idle callback decrements each pending request's tick count by one per invocation
-and signals the request once it reaches zero [`json_hal_client.c:535-556`, reached through
-`request_idle_cb()` at `:227-232`]. The receive loop calls that idle callback once per pass, and only
+and signals the request once it reaches zero [`json_hal_client.c:535-556`, reached through the
+internal idle callback at `:227-232`]. The receive loop calls that idle callback once per pass, and only
 when no partial message is being held [`tcp_client.c:251-253`]. Three consequences follow, and a
 caller should size its own expectations against them rather than against a stopwatch:
 
@@ -1082,6 +1083,25 @@ exercised against the **`json-c-0.15-20200726`** revision
 [`json-hal-library/cov_docker_script/component_config.json:11`]. An integrator who reads only the
 first will under-provision relative to what upstream actually tests; one who reads only the second
 will overstate what the library requires. Both are therefore given, each labelled with what it is.
+
+**Neither figure is a security recommendation, and unpatched upstream `json-c 0.11` must not be
+deployed in production.** The `0.11` above is a historical attribution of what the transport library
+declares, not guidance on what a deployment should build against. Unpatched upstream `json-c 0.11`
+is affected by `CVE-2013-6370`, a buffer overflow; `CVE-2013-6371`, a hash-collision denial of
+service; and `CVE-2020-12762`, an integer overflow leading to an out-of-bounds write, scored CVSS
+v3.1 7.8 HIGH (`AV:L/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H`) by NVD and fixed in `json-c 0.15`. That `AV:L`
+vector is consistent with how this interface is reached: the transport is loopback-only, with
+`SERVER_HOST` defined as `127.0.0.1` [`tcp_client.h:33`], applied at [`json_hal_client.c:207`], and
+the server binding `127.0.0.1` [`tcp_server.c:144-146`]. The exposure is therefore a hostile or
+malfunctioning local peer on the loopback socket, not a remote network attacker. It is nonetheless
+concrete rather than theoretical, because this dependency sits on the peer-facing parse path: the transport hands bytes read off the
+HAL socket to `json_tokener_parse_ex()` and `json_tokener_parse()` before any of the validation this
+specification describes takes place, so a malformed or hostile message reaches the parser first. A
+production deployment therefore links either a distribution build of `json-c` that carries backports
+of those fixes, or a maintained upstream release at `0.15` or later — `0.15` is where the
+out-of-bounds write was corrected, and current upstream is `0.19`. A vendor that must build against
+`0.11` for compatibility with an existing platform treats the backport of these three fixes as a
+release condition, not as an optional hardening step.
 
 **Build-time selection.** Which schema variant a build speaks is a compile-time decision, not a
 runtime one. `Variability Management` and `Platform or Product Customization` set out the control and

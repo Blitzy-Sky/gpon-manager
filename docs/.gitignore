@@ -1,4 +1,4 @@
-# Ignore the output files for doxygen
+# Ignore generated documentation, cloned generator, and Node.js dependency artifacts.
 node_modules
 
 output
