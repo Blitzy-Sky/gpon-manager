@@ -1542,7 +1542,8 @@ The receive thread takes `gm_event_tracking_lock`
 [[`json_hal_client.c:427`](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/json_hal_client.c)],
 walks the subscription list [same file, `:428`], invokes the matching callback **inside** that
 traversal [`:440`], and releases the lock only when the walk completes [`:472`]. Three consequences
-bound what a callback body may do, and they are stricter than "synchronize your state":
+bound what a callback body may do, and they are stricter than an instruction to keep local state in
+step:
 
 - **It must not block and must not issue a synchronous `HAL` request.** That thread is the only one
   reading the socket, so while a callback runs no reply and no further event is delivered, and every
