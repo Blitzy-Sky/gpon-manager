@@ -452,9 +452,13 @@ count rather than freeing unconditionally.
     server side accumulates across reads, so a request that does not arrive complete in one read is
     not assembled into a document — it is parsed as a fragment, fails to complete, and is discarded
     without a reply, which costs the caller its full wait for a message the server never answered.
-    The client's own send loop writes the whole request regardless of size
-    [`tcp_client.c:59-79`], so the loss happens at the server's read and is invisible on the sending
-    side. A caller batching many parameters into one `params` array must therefore split the batch
+    The client's own send loop does not reliably write the whole request either, so a caller cannot
+    treat "sent" as "delivered" in either direction: the loop advances `total_bytes_sent` while
+    decrementing `total_bytes_left` and continues only while the first is below the second
+    [`tcp_client.c:66-77`], so a single partial `send` returning at least half the remaining bytes
+    satisfies the exit condition and the function returns `RETURN_OK` with the tail unsent. It also
+    treats any `-1` as fatal, so `EINTR` and `EAGAIN` end the send rather than retrying it. A loss at
+    the server's read is invisible on the sending side, and so is this one. A caller batching many parameters into one `params` array must therefore split the batch
     itself; the transport will not do it. The bulk reads the manager issues are scoped by object
     prefix for exactly this reason; see `API Surface`.
   - **A reply is not capped at one buffer.** The client reads in 16384-byte chunks, and whenever a
@@ -486,8 +490,14 @@ count rather than freeing unconditionally.
   which disconnected has released anything on its behalf, and it must be able to serve a fresh
   connection from a restarted manager.
 - Neither side may assume the other's allocation lifetimes. This is the practical benefit of the
-  two-process model: a leak or a corruption in the vendor implementation cannot corrupt the
-  manager's heap, which is not true of a C HAL loaded into the calling process.
+two-process model: a vendor's allocation policy cannot reach the manager's heap, because the
+  two share no address space and no allocator. That is a statement about pointers and
+  allocations, and it must not be read as isolation from a hostile peer: the peer's DATA does
+  cross the boundary, and this manager copies received JSON names and values into fixed buffers
+  without always bounding them. `Contract Defects` in `halSpecDetailed.md` records those copies
+  with their locators. A malformed or hostile message can therefore corrupt manager memory
+  through the parsing path, which is a different exposure from the one a C HAL in-process has
+  and not an absence of exposure.
 
 *Derived from `source/TR-181/middle_layer_src/gponmgr_dml_hal.c:46-51,219-231,264-286`, and
 `json_hal_client.h`, `json_hal_common.h` and `json_rpc_common.h` at the pinned transport revision
@@ -950,8 +960,11 @@ transport revision; the `Ploam`, `PhysicalMedia` and `TR69` parameter definition
 described in `Memory Model`, and copies any value it needs out of a reply before releasing it.
 
 **Vendor implementation responsibility.** A vendor server allocates whatever it needs internally and
-is solely responsible for releasing it. Nothing crosses the process boundary, so a vendor's
-allocation policy cannot affect the caller's heap.
+is solely responsible for releasing it. No allocation and no pointer crosses the process boundary,
+so a vendor's allocation policy cannot affect the caller's heap. Received data does cross it, and
+`Contract Defects` in `halSpecDetailed.md` records where this manager copies peer-supplied names and
+values into fixed buffers without bounding them; the process boundary does not protect the manager
+from its own handling of what it receives.
 
 **The quantitative limits this interface actually imposes**, each with the artefact that sets it:
 
