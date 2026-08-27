@@ -38,6 +38,16 @@ case "${PROJECT_VERSION}" in
         ;;
 esac
 
+# WHAT THIS SCRIPT DOES NOT VERIFY, stated because a developer running it should know.
+# The flow below is the corpus form used by all eighteen RDK-B HAL repositories, and it
+# reuses whatever `./build` already contains, does not prove that checkout's origin, pinned
+# commit or cleanliness, and continues past a failed clone, cd or checkout. So the pin above
+# names what a first clone fetches, not necessarily what a later run executes. Delete
+# `docs/build` to force a fresh clone if that matters. The reviewed build path
+# (/opt/halspec-gates/gate1.sh) performs those checks and refuses rather than warns; this
+# script deliberately does not, because AAP 0.8.2 excludes the documentation toolchain from
+# this change and AAP 0.9.1 holds these four scripts to the fourteen frozen siblings' form.
+
 # Check if the common document configuration is present, if not clone it
 if [ -d "./build" ]; then
     make -C ./build PROJECT_NAME="RDK-B GPON HAL" PROJECT_VERSION=${PROJECT_VERSION}
