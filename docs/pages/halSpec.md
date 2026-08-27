@@ -464,10 +464,15 @@ count rather than freeing unconditionally.
   - **A reply is not capped at one buffer.** The client reads in 16384-byte chunks, and whenever a
     read fills the buffer it appends that chunk to a heap accumulator grown by `realloc` and reads
     again, handing the assembled document to its parse callback only once a shorter read completes it
-    [`tcp_client.c:188-212`, dispatch at `:234`]. A reply spanning several chunks is delivered whole,
-    and neither schema nor the transport states a ceiling on its total size, so a caller must not
-    impose a 16384-byte expectation on a reply and must not assume a bound the transport does not
-    state. The practical limit is the memory the accumulation consumes in the caller's process.
+    [`tcp_client.c:188-212`, dispatch at `:234`]. Neither schema nor the transport states a ceiling on
+    a reply's total size, so a caller must not impose a 16384-byte expectation on one and must not
+    assume a bound the transport does not state; the practical limit is the memory the accumulation
+    consumes in the caller's process. **Completeness is inferred from read length, not from JSON
+    structure, so a reply spanning several chunks is not guaranteed to arrive whole.** Any read that
+    does not fill the buffer is treated as the end of the message, so a reply delivered in segments
+    that happen to be short is parsed early as a truncated document; the transport carries no length
+    prefix and no delimiter with which to detect it. `Contract Defects` in `halSpecDetailed.md`
+    records this with its locator.
 - **Do not reuse a request handle for a second send.** Correlation depends on each exchange carrying
   its own `reqId`, and the header helper allocates one per call.
 - **Zero-terminate every string placed in a request.** The parameter entry the manager fills is a
@@ -477,9 +482,10 @@ count rather than freeing unconditionally.
 #### Module Responsibilities
 
 - The client library owns the receive buffer on the **reply** path and the assembly of a reply that
-  spans several reads [`tcp_client.c:188-212`], so a caller never sees a partial reply. The server
-  side of the transport provides no equivalent, which is why the size bound above applies to the
-  request direction only.
+  spans several reads [`tcp_client.c:188-212`]. That assembly is occupancy-driven rather than framed:
+  a caller can see a partial reply, because a short read ends the assembly whether or not the
+  document is complete. The server side of the transport provides no assembly at all, which is why
+  the size bound above applies to the request direction only.
 - The library assigns the reply handle only after an exchange that returned a non-negative code, and
   only from parsing the received buffer [`json_hal_client.c:691-693`]; it transfers that handle to the
   caller, who becomes responsible for releasing it. It never releases, and never takes ownership of,
