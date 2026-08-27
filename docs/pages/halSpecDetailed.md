@@ -5,7 +5,7 @@ schema files as inline `Doxygen` documentation stands to a C header: for every p
 declares, it gives the `TR-181` path, the wire datatype, the value constraint, the access the server
 enforces and the meaning the schema states. The interface overview — architecture, initialization,
 threading, memory, blocking behaviour and the non-functional requirements — is in
-[`halSpec.md`](halSpec.md) and is not repeated here.
+[halSpec.md](halSpec.md) and is not repeated here.
 
 ## Purpose and how to read it
 
@@ -39,9 +39,9 @@ caller does about a refusal, and `Event Model` how the asynchronous path works a
 transport diverges from the schema on it.
 
 **One verification limit applies throughout.** `GPON` is not available on the `HUB6` or `XER10`
-reference platforms [superproject `README.md:102-103`], so nothing here has been confirmed by running
-the HAL. Every statement is derived from a shipped artefact, and each carries the locator that
-establishes it.
+reference platforms [the superproject README, lines 102-103], so nothing here has been confirmed by
+running the HAL. Every statement is derived from a shipped artefact, and each carries the locator
+that establishes it.
 
 *Derived from `hal_schema/gpon_hal_schema.json`, `hal_schema/gpon_wan_unify_hal_schema.json`,
 `config/gpon_manager_conf.json`, `source/TR-181/middle_layer_src/gponmgr_dml_hal.c` and the pinned
@@ -68,8 +68,8 @@ invitation: a caller should send only what an action binds, and a server must no
 unknown member being rejected for it. Verified by instance validation — a `result` message carrying
 an additional top-level member validates against both schemas.
 
-**`reqId` is a client-side counter zero-padded to *at least* eight digits, and its two
-representations differ.** The client formats it with `sprintf(id, "%8.8d", req_id)` into a
+<b>`reqId` is a client-side counter zero-padded to *at least* eight digits, and its two
+representations differ.</b> The client formats it with `sprintf(id, "%8.8d", req_id)` into a
 seventeen-byte buffer
 [[`json_hal_client.c:849,852`](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/json_hal_client.c)].
 `%8.8d` is a minimum field width of eight with a precision of eight, so it pads a shorter value to
@@ -82,7 +82,7 @@ which imposes no length bound of its own. The counter's growth is defined only w
 representable in the `static int` behind it: the reset guard at
 [`json_hal_client.c:962-963`](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/json_hal_client.c#L962-L963)
 is unreachable in defined arithmetic and the increment past `INT_MAX` is signed overflow, so no
-identifier may be asserted beyond that boundary — `halSpec.md`'s `Persistence Model` states the three
+identifier may be asserted beyond that boundary — [halSpec.md](halSpec.md)'s `Persistence Model` states the three
 cases. The receive path, however, parses the value
 with `strtol(..., 16)` — base **16** — on both the send and the match side
 [same file, `:646` and `:485`]. For the decimal digits `0`-`9` the two agree on every value the
@@ -90,7 +90,7 @@ counter emits, so correlation works; a server that answered with a `reqId` conta
 letter would be parsed differently from how it was written. A server must echo the identifier it was
 sent, unchanged, and must not renumber it.
 
-**`reqId` is unbounded in the schema and bounded at 63 usable bytes in the pinned server.** Neither
+<b>`reqId` is unbounded in the schema and bounded at 63 usable bytes in the pinned server.</b> Neither
 file places a `maxLength` on it — the whole constraint is `{"type": "string", "pattern": "^[0-9]+$"}`
 — so an identifier of any length validates. The server stores it in fixed 64-byte arrays: a local
 `char req_id[BUF_64]` in the request handler
@@ -129,7 +129,7 @@ The `recv()` at `:188` is issued with `MAX_BUFFER_SIZE` as its length, so the `r
 test at `:191` can be satisfied only by a full buffer.
 
 Four consequences bear directly on how a message in this document should be sized, and
-[`halSpec.md`](halSpec.md) states them in full under `Memory Model`. The first two are the two
+[halSpec.md](halSpec.md) states them in full under `Memory Model`. The first two are the two
 directions of the same occupancy condition and neither is safe to quote without the other:
 
 - **Any read that leaves room in the buffer is parsed on the spot**, as though the document were
@@ -143,7 +143,7 @@ directions of the same occupancy condition and neither is safe to quote without 
   design against, not an outcome to predict from a size.
 - **While that state persists the client's idle callback is suppressed** [`tcp_client.c:251`], and
   that callback is what ages pending requests, so the synchronous wait in `Error Handling` runs with
-  no timer beneath it. `halSpec.md` gives the chain.
+  no timer beneath it. [halSpec.md](halSpec.md) gives the chain.
 - **The accumulator is `NUL`-delimited rather than length-delimited**, because each append copies a
   fixed `MAX_BUFFER_SIZE` bytes at an offset computed with `strlen()`.
 
@@ -165,7 +165,7 @@ commit `86a0a300`.*
 
 **There is no `setParametersResponse`.** This is the single most commonly mis-stated fact about this
 protocol, so it is stated plainly rather than left to be inferred from a table: a write is
-acknowledged by the generic **`result`** action carrying `Result.Status`. A caller waiting for an
+acknowledged by the generic <b>`result`</b> action carrying `Result.Status`. A caller waiting for an
 action named symmetrically with `setParameters` waits for a message this contract does not define.
 `result` is consequently the reply in more than one workflow — it answers `setParameters` and
 `subscribeEvent`. It is **not** stated to be the reply to `deleteObject`: that action cannot be
@@ -210,7 +210,7 @@ Three bind nothing.
 | `deleteObject` | Client | `params` — **uninstantiable**; see `Contract Defects` | `name`, but no value satisfies it |
 | `result` | Server | `Result`, object, `Status` required | not applicable |
 
-**"No payload binding" is not the same as "sent as a bare envelope."** The schema binds no payload to
+<b>"No payload binding" is not the same as "sent as a bare envelope."</b> The schema binds no payload to
 `getSchema`, `getActiveSubscriptions` or `getActiveSubscriptionsResponse`, so a bare four-field
 envelope validates for all three. But the transport's own header helper,
 `json_hal_client_get_request_header()`, attaches an **empty `params` array** whenever
@@ -321,6 +321,7 @@ question because nothing validates.
 | `value` present but `null` | **Invalid** against either leaf kind: every leaf constrains `value` by type. **Valid** against an open object, where `value` is an unconstrained extra member | Not specified by this interface. Nothing rejects it, and a caller reading it with `json_hal_get_param()` receives whatever that helper makes of a null node |
 | A required member of a `params` entry missing | **Invalid for all four kinds.** `required` is set by the action: `name` for `getParameters` and `deleteObject`, `name`/`type`/`value` for `setParameters`, `getParametersResponse` and `publishEvent`, `name`/`notificationType` for `subscribeEvent` | Nothing rejects it. For a missing `value` the extraction helper's outcome is **asymmetric by datatype** and is specified exactly — see `Missing value: five datatypes fail silently` below |
 | `params` present but an empty array | Invalid for every action that binds `params`, because each branch sets `minItems: 1`. Valid for the three actions with no binding, which is what the client's header helper produces for two of them | Not specified. The empty array reaches the peer |
+| Two `params` entries naming the **same parameter** with different content | **Valid.** `uniqueItems` compares whole entry objects, not the `name` member, so it rejects only a byte-identical repeat. A two-entry `setParameters` on `Device.X_RDK_ONT.PhysicalMedia.1.RxPower.SignalLevelLowerThreshold` carrying `-30` and `-25` validates, as does the equivalent `getParametersResponse` pair, and a `subscribeEvent` naming `Device.X_RDK_ONT.PhysicalMedia.1.Status` twice with `interval` and `onChange`. Only `getParameters` and `deleteObject` are protected, and only incidentally: their entry is `name` alone, so two entries naming one parameter are necessarily identical | **Not specified, and not reported.** `result` carries one `Status` for the whole message rather than one per entry, so a caller cannot learn which value was applied — see the note below the per-action table |
 | An unknown member alongside the four required envelope fields | Valid. The root declares no `additionalProperties: false` | Not specified by this interface. Nothing rejects the member, and no code path in the pinned transport reads a member it does not expect |
 | An unknown member inside a `params` entry | **Invalid** against a closed leaf and against `ontPhysicalMediaAlarmObj`. **Valid** against `ontTR69url` and against all 25 open object definitions, which omit `additionalProperties: false` — see `Contract Defects` | Not specified |
 | A `type` label that disagrees with the parameter's declared datatype | **Invalid** against either leaf kind, which binds `type` to a `const`. **Valid** against any object definition, which declares no `type` at all | Not specified. The label is informational on the wire; nothing cross-checks it against the value |
@@ -337,13 +338,27 @@ anything other than a closed leaf, which is why they are the only ones whose ver
 | `getParameters` | all four — 89 closed leaves (94 in the variant), `ontTR69url`, 25 open objects, `ontPhysicalMediaAlarmObj` | **Invalid** — `minItems: 1` | Only `name` is required here, so the question is the unknown member alone: **rejected** against a closed leaf or `ontPhysicalMediaAlarmObj`, **accepted** against `ontTR69url` or any of the 25 open objects |
 | `getParametersResponse` | the same four | **Invalid** — `minItems: 1` | **Rejected** against a closed leaf; an unknown member is **accepted** against `ontTR69url`, and an unknown member, a `null` value and a wrong `type` label are all **accepted** against an open object. `ontPhysicalMediaAlarmObj` cannot appear at all, because the action requires `type` and `value` and the definition forbids both |
 | `setParameters` | closed leaves only — 8, or 11 in the variant | **Invalid** — `minItems: 1` | Rejected in every case |
-| `subscribeEvent` | closed leaves only — the 18 subscribable parameters | **Invalid** — `minItems: 1` | Rejected in every case |
-| `publishEvent` | closed leaves only — the same 18 | **Invalid** — `minItems: 1` | Rejected in every case |
+| `subscribeEvent` | closed leaves only — the 18 members of `subscribeEventSupportedList`, but only **2 of the 18 can form a valid message at all**; see `Event Model` | **Invalid** — `minItems: 1` | Rejected in every case |
+| `publishEvent` | closed leaves only — the same 18, every one of which can form a valid message | **Invalid** — `minItems: 1` | Rejected in every case |
 | `deleteObject` | none — its `anyOf` is empty, so no entry can validate | Invalid, as is every other form of this action | Invalid, as is every other form |
 | `getActiveSubscriptions` | none — binds no `params` | Valid; the helper sends `"params": []` | not applicable |
 | `getActiveSubscriptionsResponse` | none — binds no `params` | Valid | not applicable |
 | `getSchemaResponse` | not applicable — carries `SchemaInfo` | not applicable, and the client helper sends no array for this name either: its exclusion is a prefix test on `getSchema` | `SchemaInfo` sets `additionalProperties: false`, so rejected |
 | `result` | not applicable — carries `Result` | not applicable | `Result` sets `additionalProperties: false`, so rejected |
+
+**One parameter may be named more than once in a single message, and nothing in this contract decides
+what that means.** The boundary table above records the verdict; what it costs a caller is worth stating
+separately, because `uniqueItems` reads at a glance like a guarantee that it is not. The schema does not
+order `params`, states nowhere that a later entry supersedes an earlier one, and acknowledges a write
+with a single `Result.Status` for the whole message rather than one status per entry. So where two
+entries name one parameter with different values, a caller cannot establish from the contract or from
+the reply which value was applied, whether both were applied in sequence, or whether the server took
+the message as a whole and rejected it. Three obligations follow. A **caller** de-duplicates `params` by
+`name` before dispatch and does not use entry order to express intent. A **vendor** settles the
+behaviour deliberately and records it outside this contract, rather than assuming a validating message
+carries at most one value per parameter. And a **test author** does not read schema validity as
+semantic well-formedness on this surface: a positive case generated by mutating one entry of a
+multi-entry array can validate while asserting nothing about what the server did.
 
 ### Missing value: five datatypes fail silently
 
@@ -357,9 +372,9 @@ and then dispatches on the entry's `type` label:
 | Entry's `type` label | Result when `value` is absent |
 | --- | --- |
 | `string`, `hexBinary`, `base64` | `RETURN_ERR` — each arm has an `else` that returns [same file, `:72-74,81-83,90-92`] |
-| `boolean`, `int`, `unsignedInt`, `long`, `unsignedLong` | **`RETURN_OK`.** Those five arms have no `else` [`:95-129`], so `param->value` keeps the empty string from the `memset` while `param->type` is set as though a value had been read |
-| any label matching none of the eight | **`RETURN_OK`** with the struct still fully zeroed: the `if`/`else if` chain ends and control falls to the `break` [`:129-134`] and then to `return RETURN_OK` [`:141`] |
-| any label, under the publish action | **`RETURN_OK`** with the struct fully zeroed — `PUBLISHEVENT_RESPONSE_MESSAGE` shares the `default` arm, which logs and breaks without reading anything [`:135-138`] |
+| `boolean`, `int`, `unsignedInt`, `long`, `unsignedLong` | <b>`RETURN_OK`.</b> Those five arms have no `else` [`:95-129`], so `param->value` keeps the empty string from the `memset` while `param->type` is set as though a value had been read |
+| any label matching none of the eight | <b>`RETURN_OK`</b> with the struct still fully zeroed: the `if`/`else if` chain ends and control falls to the `break` [`:129-134`] and then to `return RETURN_OK` [`:141`] |
+| any label, under the publish action | <b>`RETURN_OK`</b> with the struct fully zeroed — `PUBLISHEVENT_RESPONSE_MESSAGE` shares the `default` arm, which logs and breaks without reading anything [`:135-138`] |
 
 **So the return code is not a sufficient check, and three direct checks are required instead.** First,
 before extracting, confirm with `json_object_object_get_ex()` that the entry actually carries `name`,
@@ -416,8 +431,8 @@ and labels the struct `PARAM_UNSIGNED_INTEGER`
 [[`:114`](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/json_hal_common.c#L114)];
 the `unsignedLong` arm uses `json_object_get_int64()` with `"%ld"`
 [[`:123-128`](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/json_hal_common.c#L123-L128)].
-On construction, `json_hal_add_param()` uses `atoi()` for `int`, `atol()` for `long` and **`atoll()`
-for both unsigned datatypes**, wrapping the result with `json_object_new_int()` for `unsignedInt` — a
+On construction, `json_hal_add_param()` uses `atoi()` for `int`, `atol()` for `long` and <b>`atoll()`
+for both unsigned datatypes</b>, wrapping the result with `json_object_new_int()` for `unsignedInt` — a
 32-bit signed container — or `json_object_new_int64()` for `unsignedLong`
 [[`json_hal_common.c:190-209`](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/json_hal_common.c#L190-L209)].
 Both numeric extraction arms write through `snprintf()` bounded by `sizeof(param->value)`, so a numeric
@@ -437,9 +452,9 @@ rendered unsigned value.
 
 **Version-qualified, because the contract pins no `json-c`.** Both accessors return signed types,
 `int32_t` and `int64_t`, so a JSON number outside that range has to be converted and the conversion
-belongs to the linked `json-c`. `halSpec.md`'s `Build Requirements` records the two revisions this
-interface names: **`json-c (0.11)` as the declared minimum** [`json-hal-library/README.md:56,140`] and
-**`json-c-0.15-20200726` as the revision the upstream native build exercises**
+belongs to the linked `json-c`. [halSpec.md](halSpec.md)'s `Build Requirements` records the two revisions this
+interface names: <b>`json-c (0.11)` as the declared minimum</b> [`json-hal-library/README.md:56,140`] and
+<b>`json-c-0.15-20200726` as the revision the upstream native build exercises</b>
 [`json-hal-library/cov_docker_script/component_config.json:11`]. In both of those the accessor
 **clamps** an out-of-range number to the nearest representable bound rather than wrapping it, so the
 negative decimal string a wrap would produce does not arise there; another `json-c` may differ.
@@ -480,7 +495,7 @@ interface. Neither schema states what a server should answer to an action it doe
 *Derived from `json_hal_client.c:190-214`, `json_hal_server.c:281-283,496-512`,
 `json_hal_common.c:26-141,95-220`, `json_hal_common.h:57-67`,
 `source/TR-181/middle_layer_src/gponmgr_dml_hal.c:302-363`, `json_rpc_common.h:61-68`,
-`json-hal-library/README.md:56,140` and
+the `json-hal-library` README at lines 56 and 140, and
 `json-hal-library/cov_docker_script/component_config.json:11` at pinned `json-hal-library` commit
 `86a0a300`; the eight `allOf` branches, every parameter and object definition, a census of the `value`
 constraint on every `unsignedInt` and `unsignedLong` definition, and `definitions.ontPloamSerialNumber`
@@ -609,7 +624,7 @@ reader of these schemas can trust the marker.
 cell carries the path and the definition key and nothing more, so a reader or a tool may take it as
 exactly what the schema declares:
 
-- A definition that exists only in the `wan_unify` variant is flagged **`wan_unify` only** at the head
+- A definition that exists only in the `wan_unify` variant is flagged <b>`wan_unify` only</b> at the head
   of its `Description` cell. Five definitions carry that flag, all in `PhysicalMedia`.
 - `[D1]` marks a parameter whose declared enumeration is not enforced, and sits in the
   `Type and Constraint` cell beside the constraint it qualifies.
@@ -650,13 +665,13 @@ sub-objects group the optical measurements: `RxPower.`, `TxPower.`, `Voltage.`, 
 | `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.SF`<br>`ontPhysicalMediaAlarmSf` | `string`; `alarmEnumList` | Read-Only, subscribable | Signal failed, when BER value is beyond to the one configured at the ONU |
 | `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.SUF`<br>`ontPhysicalMediaAlarmSuf` | `string`; `alarmEnumList` | Read-Only, subscribable | Start up failure, when the ranging of the ONU has failed |
 | `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.TF`<br>`ontPhysicalMediaAlarmTf` | `string`; `alarmEnumList` | Read-Only, subscribable | Transmitter failure, The ONU transmitter is declared in failure when there is no nominal backfacet photocurrent or when the drive currents go beyond the maximum specification |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alias`<br>`ontPhysicalMediaAlias` | `string`; string, max length 64 | Read-Write | **`wan_unify` only.** The alias, it shows a non-volatile unique key used to reference this instance. Alias provides a mechanism for a Controller to label this instance for future reference. |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alias`<br>`ontPhysicalMediaAlias` | `string`; string, max length 64 | Read-Write | <b>`wan_unify` only.</b> The alias, it shows a non-volatile unique key used to reference this instance. Alias provides a mechanism for a Controller to label this instance for future reference. |
 | `Device.X_RDK_ONT.PhysicalMedia.{i}.Bias.CurrentBias`<br>`ontPhysicalMediaCurrentBias` | `unsignedInt`; integer, otherwise unconstrained | Read-Only | The bias current measured at the optical module |
 | `Device.X_RDK_ONT.PhysicalMedia.{i}.Cage`<br>`ontPhysicalMediaCage` | `string`; string, one of `BoB`, `SFP` | Read-Only | Specifies the hardware layout for the optical device, bosa on board or external SFP |
 | `Device.X_RDK_ONT.PhysicalMedia.{i}.Connector`<br>`ontPhysicalMediaConnector` | `string`; string, no value constraint in effect [D1] | Read-Only | The kind of optical connector used in the optical module |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.Enable`<br>`ontPhysicalMediaEnable` | `boolean`; boolean, otherwise unconstrained | Read-Write | **`wan_unify` only.** The Enable, indicates whether the interface is enabled or disbled. |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.LastChange`<br>`ontPhysicalMediaLastChange` | `unsignedInt`; integer, minimum 0 | Read-Only | **`wan_unify` only.** The last change, it shows the accumulated time in seconds since the DSL line entered its current operational state. |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.LowerLayers`<br>`ontPhysicalMediaLowerLayers` | `string`; string, max length 1024 | Read-Write | **`wan_unify` only.** The lower layers, it shows comma-separated list (maximum list length 1024) of strings. |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.Enable`<br>`ontPhysicalMediaEnable` | `boolean`; boolean, otherwise unconstrained | Read-Write | <b>`wan_unify` only.</b> The Enable, indicates whether the interface is enabled or disbled. |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.LastChange`<br>`ontPhysicalMediaLastChange` | `unsignedInt`; integer, minimum 0 | Read-Only | <b>`wan_unify` only.</b> The last change, it shows the accumulated time in seconds since the DSL line entered its current operational state. |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.LowerLayers`<br>`ontPhysicalMediaLowerLayers` | `string`; string, max length 1024 | Read-Write | <b>`wan_unify` only.</b> The lower layers, it shows comma-separated list (maximum list length 1024) of strings. |
 | `Device.X_RDK_ONT.PhysicalMedia.{i}.ModuleFirmwareVersion`<br>`ontPhysicalMediaModuleFirmwareVersion` | `string`; string, max length 256 | Read-Only | Informs about the firmware version of the optical module |
 | `Device.X_RDK_ONT.PhysicalMedia.{i}.ModuleName`<br>`ontPhysicalMediaModuleName` | `string`; string, max length 256 | Read-Only | Informs about the module name of the optical module |
 | `Device.X_RDK_ONT.PhysicalMedia.{i}.ModuleVendor`<br>`ontPhysicalMediaModuleVendor` | `string`; string, max length 256 | Read-Only | Informs about the vendor of the optical media |
@@ -675,7 +690,7 @@ sub-objects group the optical measurements: `RxPower.`, `TxPower.`, `Voltage.`, 
 | `Device.X_RDK_ONT.PhysicalMedia.{i}.TxPower.SignalLevel`<br>`ontPhysicalMediaTxPowerSignalLevel` | `int`; integer, otherwise unconstrained | Read-Only | The optical level received at the optical module |
 | `Device.X_RDK_ONT.PhysicalMedia.{i}.TxPower.SignalLevelLowerThreshold`<br>`ontPhysicalMediaTxPowerSignalLevelLowerThreshold` | `int`; integer, otherwise unconstrained | Read-Write | The optical level threshold configured to generate a Low signal level alarm |
 | `Device.X_RDK_ONT.PhysicalMedia.{i}.TxPower.SignalLevelUpperThreshold`<br>`ontPhysicalMediaTxPowerSignalLevelUpperThreshold` | `int`; integer, otherwise unconstrained | Read-Write | The optical level threshold configured to generate an signal overload alarm |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.Upstream`<br>`ontPhysicalMediaUpstream` | `boolean`; boolean, otherwise unconstrained | Read-Only | **`wan_unify` only.** The Upstream, indicates whether the interface points towards the Internet (true) or towards End Devices (false). |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.Upstream`<br>`ontPhysicalMediaUpstream` | `boolean`; boolean, otherwise unconstrained | Read-Only | <b>`wan_unify` only.</b> The Upstream, indicates whether the interface points towards the Internet (true) or towards End Devices (false). |
 | `Device.X_RDK_ONT.PhysicalMedia.{i}.Voltage.VoltageLevel`<br>`ontPhysicalMediaVoltageLevel` | `int`; integer, otherwise unconstrained | Read-Only | The voltage measured the optical module |
 
 ### Gem
@@ -1015,23 +1030,32 @@ and is referenced from that workflow rather than repeated.
 }
 ```
 
-**A `wan_unify`-only write, published exactly as shipped.**
+**A `wan_unify`-only write, published as the shipped bytes.**
 `hal_schema/example_setParameters_msg.json` writes `Device.X_RDK_ONT.PhysicalMedia.1.Enable` with
 `type` `boolean`. That parameter exists only in `hal_schema/gpon_wan_unify_hal_schema.json`, so the
 fixture is **invalid against the default schema and valid, unchanged, against the variant**. It is a
-correct `wan_unify` example rather than a broken one, and it is reproduced here byte for byte with
-its variant named — correcting it would damage it. A build that has not defined
-`WAN_MANAGER_UNIFICATION_ENABLED` must not send this message.
+correct `wan_unify` example rather than a broken one — correcting it would damage it — so it is
+published below with its variant named and its formatting left as it ships. A build that has not
+defined `WAN_MANAGER_UNIFICATION_ENABLED` must not send this message.
 
-**Request** — manager to vendor server, `wan_unify` variant only, reproduced unchanged:
+**What a reader can check about that block.** It carries the file's bytes as shipped, including the
+two trailing spaces after `"version": "0.0.1",`, the space before the colon in `"reqId" : "100001"`,
+and the line break between `"params":` and its opening bracket. The file itself ends at its closing
+brace with **no final newline**; the newline that closes the fenced block stands in for it, and that
+is the only respect in which the block differs from the file. The fixture is not edited by this
+documentation, only quoted — and the whitespace inside the block is therefore deliberate, so
+reformatting or tidying it would falsify this paragraph.
+
+**Request** — manager to vendor server, `wan_unify` variant only, the shipped bytes:
 
 ```json
 {
   "module": "gponhal",
-  "version": "0.0.1",
+  "version": "0.0.1",  
   "action": "setParameters",
-  "reqId": "100001",
-  "params": [
+  "reqId" : "100001",
+  "params":
+  [
      {"name":"Device.X_RDK_ONT.PhysicalMedia.1.Enable", "type":"boolean", "value": true}
   ]
 }
@@ -1201,13 +1225,19 @@ other consumers may depend on — and every correction below exists only in this
 | File | Schema verdict | Disposition here |
 | --- | --- | --- |
 | `example_getParameters_msg.json` | **Invalid against both.** Names the bare prefix `Device.X_RDK_ONT.PhysicalMedia.`, which `ontPhysicalMediaObjName` does not match | Corrected form published under `Read parameters` |
-| `example_setParameters_msg.json` | Invalid against the base schema, **valid unchanged against the variant**, which adds `PhysicalMedia.{i}.Enable` | Published unchanged under `Write parameters` with the variant named |
+| `example_setParameters_msg.json` | Invalid against the base schema, **valid unchanged against the variant**, which adds `PhysicalMedia.{i}.Enable` | Published as its shipped bytes under `Write parameters`, with the variant named |
 | `example_getSchemaResponse_msg.json` | Valid against both, and **semantically wrong**: returns `/etc/rdk/hal_schemas/xtm_hal_schema.json` | Corrected path published under `Retrieve the server's schema location` |
-| `example_getSchema_msg.json` | Valid against both | Used as it is |
-| `example_getParametersResponse_msg.json` | Valid against both | Used as it is |
-| `example_subscribeEvent_msg.json` | Valid against both | Used as it is |
-| `example_publishEvent_msg.json` | Valid against both | Used as it is |
-| `example_result_msg.json` | Valid against both | Used as it is |
+| `example_getSchema_msg.json` | Valid against both | Needs no correction; not reproduced here — the worked exchange above is authored |
+| `example_getParametersResponse_msg.json` | Valid against both | Needs no correction; not reproduced here — the worked exchange above is authored |
+| `example_subscribeEvent_msg.json` | Valid against both | Needs no correction; not reproduced here — the worked exchange above is authored |
+| `example_publishEvent_msg.json` | Valid against both | Needs no correction; not reproduced here — the worked exchange above is authored |
+| `example_result_msg.json` | Valid against both | Needs no correction; not reproduced here — the worked exchange above is authored |
+
+**Only one of the eight is quoted.** `example_setParameters_msg.json` is published as its shipped
+bytes, for the reason `Write parameters` gives. Every other worked exchange in this document is
+authored against the schema rather than copied from a fixture, so no other fenced block above should
+be read as a reproduction of a shipped file. That includes the two published as corrections: each
+repairs the defect its row names and is otherwise authored, not a byte-for-byte copy.
 
 Two observations for a test author. The shipped fixtures use six-digit `reqId` values such as
 `"100001"`, which satisfy the envelope's `^[0-9]+$` constraint but are shorter than anything the
@@ -1239,14 +1269,14 @@ shipped fixtures does. Finding them takes a meta-schema check and a definition-l
 message-level one. That also means a vendor can pass every conformance test built from the fixtures
 and still be affected by all seven.
 
-### D0 — `deleteObject` and `setParameterOptionalList` carry an empty `anyOf`
+### D0 — deleteObject and setParameterOptionalList carry an empty anyOf
 
 `definitions.deleteObject` is `{"anyOf": [], "required": ["name"]}` and
 `definitions.setParameterOptionalList` is `{"description": "...", "anyOf": []}`, in **both** shipped
 files. An empty `anyOf` is a schema that no instance can satisfy, because at least one branch must
 match and there are no branches.
 
-Two distinct consequences. First, **`deleteObject` is uninstantiable**: no schema-valid delete message
+Two distinct consequences. First, <b>`deleteObject` is uninstantiable</b>: no schema-valid delete message
 exists, so object deletion is unavailable through this interface regardless of what a vendor
 implements. Second, the `setParameters` action binds its entries to
 `setParameterSupportedList` **or** `setParameterOptionalList`, and because the second branch can never
@@ -1266,7 +1296,7 @@ members.
 
 `definitions.ontPhysicalMediaPonMode` and `definitions.ontPhysicalMediaConnector` constrain their
 `value` as `{"type": "string", "value": {"$ref": "#/definitions/ponModeEnumList"}}` and the
-`physicalConnectorEnumList` equivalent. **`value` is not a `JSON` Schema keyword**, so the nested
+`physicalConnectorEnumList` equivalent. <b>`value` is not a `JSON` Schema keyword</b>, so the nested
 subschema is inert: the effective constraint on both parameters is `type: string` and nothing more.
 Verified by instance validation — a `getParametersResponse` carrying
 `Device.X_RDK_ONT.PhysicalMedia.1.PonMode` with the value `NOT-A-MODE` validates against both
@@ -1282,7 +1312,7 @@ contract. A test asserting that a server rejects an out-of-list `PonMode` is ass
 schema does not require; a test asserting that a *server* reports only listed values is a vendor
 conformance test rather than a schema conformance test, and should be labelled as such.
 
-### D2 — four `name` patterns contain an unescaped `.`
+### D2 — four name patterns contain an unescaped .
 
 `ontVeipEthernetFlowIngressObj` and `ontVeipEthernetFlowEgressObj` declare
 `^Device\.X_RDK_ONT\.Veip\.\d+\.EthernetFlow\.Ingress.$` and the `Egress` equivalent;
@@ -1305,7 +1335,7 @@ write to a path that does not exist in the data model. The intended paths are
 rejected will fail against a conforming implementation for these four definitions, so it should be
 excluded with a reference to this defect rather than recorded as a vendor fault.
 
-### D3 — one parameter definition omits `additionalProperties: false`
+### D3 — one parameter definition omits additionalProperties: false
 
 `definitions.ontTR69url` declares `name`, `type` and `value` and does not forbid other members. It is
 the only one of the 90 base definitions, and of the 95 variant definitions, that does not: the other
@@ -1322,7 +1352,7 @@ as they are on the 89 closed leaves. It is an open leaf, not an unconstrained on
 rejection; use any other parameter. It remains a valid subject for a negative test on `value` type or
 on the `type` label.
 
-### D4 — 25 of the 26 object definitions omit `additionalProperties: false`
+### D4 — 25 of the 26 object definitions omit additionalProperties: false
 
 Only `ontPhysicalMediaAlarmObj` forbids extra members. The other 25 declare `name` alone with no
 `additionalProperties`, so a `getParameters` entry naming an object prefix may carry arbitrary extra
@@ -1370,7 +1400,7 @@ it in practice.
 ### D6 — one variant-only description names the wrong access technology
 
 `ontPhysicalMediaLastChange`, one of the five definitions the `wan_unify` variant adds, describes
-itself as "the accumulated time in seconds since the **DSL line** entered its current operational
+itself as "the accumulated time in seconds since the DSL line entered its current operational
 state". There is no DSL line in a `GPON` contract; the parameter measures the optical
 `PhysicalMedia` instance. The datatype and constraint are right — `unsignedInt`, minimum 0, elapsed
 seconds — and only the wording is borrowed from another data model. It is the only description in
@@ -1431,13 +1461,13 @@ is the only input a caller has for deciding whether repeating it is even the sam
 make, and (3) vendor and per-action semantics, which **neither the schema nor the transport
 specifies**.
 
-**(1) The vocabulary.** `Result.Status` is a `string` constrained to exactly four literals by
+<b>(1) The vocabulary.</b> `Result.Status` is a `string` constrained to exactly four literals by
 `resultStatusEnumList` — `Success`, `Failed`, `Invalid Argument`, `Not Supported` — with `Success` as
 the schema default. That is the whole of what the contract fixes: the enumeration constrains the
 spelling of the token and says nothing about what a vendor means by it. `Invalid Argument` and
 `Not Supported` contain a space and are not camel-cased.
 
-**(2) What the transport itself emits.** Three of the four literals can originate inside
+<b>(2) What the transport itself emits.</b> Three of the four literals can originate inside
 `json-hal-library` rather than in vendor logic, and knowing which is what lets a caller tell a vendor
 verdict from a library one:
 
@@ -1453,9 +1483,9 @@ it, which is a very different defect to chase. And a vendor that wants to answer
 must construct the `result` message itself, so a caller should not expect that literal from a server
 built only on the shipped helpers.
 
-**(3) What a status means is not specified, and this document does not invent it.** Neither schema nor
+<b>(3) What a status means is not specified, and this document does not invent it.</b> Neither schema nor
 transport states what a vendor asserts by any of the four for any particular action. In particular
-**`Success` does not establish that a write was committed**: the schema constrains a token, the
+<b>`Success` does not establish that a write was committed</b>: the schema constrains a token, the
 transport copies it onto the wire, and nothing anywhere states that the value was validated, applied,
 persisted or made visible to a subsequent read. So a caller must not read `Success` as a durable
 mutation — if the settled value matters, **re-read the parameter** with `getParameters` and assert on
@@ -1584,9 +1614,13 @@ parsed value through the matching `Map_hal_dml_*` routine and releases
 `WAN_MANAGER_UNIFICATION_ENABLED`, `:663,:667`]. An inbound event on this interface is therefore not
 inert: it changes locked manager state, and in the `VEIP` case it initiates work.
 
-**The subscribable surface is exactly 18 parameters, identical in both variants**, because
-`subscribeEvent` and `publishEvent` both bind their entries to `subscribeEventSupportedList` and to
-nothing else. No other parameter may be subscribed or published.
+**The event surface is exactly 18 parameters, identical in both variants**, because `subscribeEvent`
+and `publishEvent` both bind their entries to `subscribeEventSupportedList` and to nothing else. No
+other parameter may be subscribed or published.
+
+The two actions do **not** reach those 18 equally, and the asymmetry is set out under `Only two of the
+eighteen event parameters can actually be subscribed` below: all 18 can be published, but only
+`ontPhysicalMediaStatus` and `ontVeipAdministrativeState` can appear in a valid `subscribeEvent`.
 
 | Group | Definition keys |
 | --- | --- |
@@ -1598,14 +1632,74 @@ nothing else. No other parameter may be subscribed or published.
 The alarm paths use uppercase acronym suffixes — `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.RDI` and
 so on — and the `Parameter Reference` rows give each path exactly.
 
-**`notificationType` admits exactly two values here: `interval` and `onChange`, defaulting to
-`onChange`.** The transport defines two more, `onChangeSync` and `onChangeSyncTimeout`, behind its
+<b>`notificationType` admits exactly two values here: `interval` and `onChange`, defaulting to
+`onChange`.</b> The transport defines two more, `onChangeSync` and `onChangeSyncTimeout`, behind its
 `JSON_BLOCKING_SUBSCRIBE_EVENT` compile guard
 [[`json_rpc_common.h:53-56`](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/json-rpc-common/json_rpc_common.h)];
 neither appears in either `GPON` schema, so a subscription requesting one does not validate on this
 interface and a vendor implementing this contract need not support them. Verified by instance
 validation. GponManager subscribes with `onChange`
 [`source/TR-181/middle_layer_src/gponmgr_dml_hal.h:43`].
+
+### Only two of the eighteen event parameters can actually be subscribed
+
+**Sixteen of the eighteen members of `subscribeEventSupportedList` cannot appear in any schema-valid
+`subscribeEvent` message.** The list is the subscription surface the contract advertises, and it is the
+publication surface too; but the two actions impose different `required` lists on the same member
+definitions, and only two of the eighteen definitions can satisfy the subscribe one.
+
+The mechanism is a two-sided lock with no way through it. `definitions.subscribeEvent` sets
+`required: ["name", "notificationType"]`, so a subscribe entry must carry `notificationType`. Every one
+of the eighteen member definitions sets `additionalProperties: false`, so an entry may carry only the
+members its own definition declares. Just two of them declare `notificationType`:
+
+| Definition key | Declares `notificationType` | Subscribable | Publishable |
+| --- | --- | --- | --- |
+| `ontPhysicalMediaStatus` | yes | **yes** | yes |
+| `ontVeipAdministrativeState` | yes | **yes** | yes |
+| the 14 `ontPhysicalMediaAlarm*` definitions | no | **no** | yes |
+| `ontPloamRegistrationState` | no | **no** | yes |
+| `ontVeipOperationalState` | no | **no** | yes |
+
+For each of the sixteen, both routes fail and they fail for opposite reasons — which is why no
+formulation of the message succeeds. Verified by instance validation against both files:
+
+| Attempt on one of the sixteen | Outcome |
+| --- | --- |
+| `subscribeEvent` entry **with** `notificationType` | invalid — `additionalProperties: false` forbids a member the definition does not declare |
+| `subscribeEvent` entry **without** `notificationType` | invalid — `subscribeEvent` requires it |
+| `publishEvent` entry with `name`, `type` and a conforming `value` | **valid** |
+
+The publish row is what makes this a contract defect rather than a narrower event surface. A vendor
+server may legitimately publish `Device.X_RDK_ONT.PhysicalMedia.1.Alarm.LOS` with `value` `Active`, and
+that message validates — but no caller can lawfully have subscribed to it, because the only action for
+registering interest rejects every form of the request. The contract therefore permits publication of
+sixteen events that cannot be subscribed to, and exactly one parameter,
+`ontPhysicalMediaStatus`, supports the full subscribe-then-receive round trip on a value that changes
+in normal operation.
+
+**What this means for a caller and for a test author.** Treat the subscribable surface as two
+parameters, not eighteen. A subscription request for any of the other sixteen is a schema violation, so
+a conforming server is entitled to reject it and a strict harness should expect rejection — do not
+record such a rejection as a vendor defect. Conversely, a harness validating inbound events must accept
+all eighteen, because the publish direction admits them all. And note the interaction with
+`Subscription identity is prefix matching, not equality` below: because the transport's subscribe
+helper discards the server's status, a client that requests one of the sixteen sees `RETURN_OK` from the
+helper and then never receives an event, with nothing distinguishing that from a working subscription
+on a parameter that simply has not changed.
+
+**Fixing it is functional work and is out of scope here.** Either the sixteen definitions gain a
+`notificationType` property, or `subscribeEvent` stops requiring it, or the list is split into a
+publish-only set and a subscribable set. All three change this repository's contract and carry their own
+compatibility analysis; none is a documentation change. This document records the defect and leaves the
+schemas untouched.
+
+*Verified by draft-07 instance validation of all eighteen members against `hal_schema/gpon_hal_schema.json`
+and `hal_schema/gpon_wan_unify_hal_schema.json`, in both the subscribe and publish directions, with each
+member's `value` taken from the constraint its own definition references — `alarmEnumList` for the
+fourteen alarms, `lockEnumList` for `ontVeipAdministrativeState`, `statusEnumList` for
+`ontPhysicalMediaStatus`, and the inline enumerations of `ontPloamRegistrationState` and
+`ontVeipOperationalState`. Results are identical in both files.*
 
 ### The publish helper is incompatible with this contract
 

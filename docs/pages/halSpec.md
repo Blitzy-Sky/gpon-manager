@@ -4,7 +4,7 @@
 
 | Date | Comment | Version |
 | --- | --- | --- |
-| 2026-08-24 | Initial release. Specifies the GPON `JSON` HAL contract carried by `hal_schema/gpon_hal_schema.json` and by its build-selected variant `hal_schema/gpon_wan_unify_hal_schema.json`, recorded as an `Unreleased` entry in `CHANGELOG.md`. | 1.0.0 |
+| 2026-08-24 | Initial release. Specifies the GPON `JSON` HAL contract carried by `hal_schema/gpon_hal_schema.json` and by its build-selected variant `hal_schema/gpon_wan_unify_hal_schema.json`, recorded as an `Unreleased` entry in [CHANGELOG.md](https://github.com/rdkcentral/gpon-manager/blob/a55601f2183e4a494cccccfbf3777a5663ef298a/CHANGELOG.md). | 1.0.0 |
 
 The `Version` column above is the revision of **this document** and of nothing else. Four distinct
 version identities apply to this component, and conflating them is the easiest way to misread it.
@@ -14,7 +14,7 @@ They are listed separately here, each with the artefact that establishes it.
 | --- | --- | --- |
 | Document revision | `1.0.0` | The table above. Applies to this specification only, and is advanced when this document changes. |
 | HAL schema version | `0.0.1` | `definitions.schemaVersion.const`, identical in both shipped schemas. This is the value that travels in every message's `version` field, and it is the only version a caller's messages carry. |
-| Release tag | `v1.7.0` | The repository's most recent tag, dated 2025-11-06 in `CHANGELOG.md`, which also records `v1.6.0` through `v1.0.0`. This is the release the document describes. |
+| Release tag | `v1.7.0` | The repository's most recent tag, dated 2025-11-06 in [CHANGELOG.md](https://github.com/rdkcentral/gpon-manager/blob/a55601f2183e4a494cccccfbf3777a5663ef298a/CHANGELOG.md), which also records `v1.6.0` through `v1.0.0`. This is the release the document describes. |
 | Generated-site version string | The `git describe --tags` output at build time | `docs/generate_docs.sh` passes it to the documentation generator as `PROJECT_VERSION`. It is recomputed on every build and is not a version. |
 
 Two consequences follow, and both are places a reader goes wrong. The interface is **not** at
@@ -22,9 +22,9 @@ Two consequences follow, and both are places a reader goes wrong. The interface 
 `0.0.1`. And the generated-site string takes the form `v1.7.0-<n>-g<abbrev-sha>` whenever the
 checked-out commit is not exactly a tag — the `-<n>-g<sha>` suffix means *n* commits past the named
 tag at that commit, so a string of that shape denotes a position in history rather than a release,
-and it never appears as a release heading in `CHANGELOG.md`.
+and it never appears as a release heading in [CHANGELOG.md](https://github.com/rdkcentral/gpon-manager/blob/a55601f2183e4a494cccccfbf3777a5663ef298a/CHANGELOG.md).
 
-*Derived from `CHANGELOG.md`, the repository's tag list, and `definitions.schemaVersion` in both
+*Derived from [CHANGELOG.md](https://github.com/rdkcentral/gpon-manager/blob/a55601f2183e4a494cccccfbf3777a5663ef298a/CHANGELOG.md), the repository's tag list, and `definitions.schemaVersion` in both
 files under `hal_schema/`.*
 
 ## Acronyms
@@ -77,15 +77,41 @@ documentation generator used here does **not** render them; it displays their so
 That limitation is stated rather than worked around, because the only available workaround would
 fix the generated site at the cost of the surface most readers actually use.
 
+**Three further limitations of the generated site, for the same reason.** Each was measured against
+the site this repository's `docs/generate_docs.sh` produces, and each originates in the generator's
+own page template and emitted navigation assets rather than in this document. Read this document on
+GitHub where any of them matters.
+
+- **The generated site does not adapt to a narrow viewport.** Its navigation pane is a fixed 500
+  pixels wide plus a 6-pixel splitter and does not shrink, so at a 1280-pixel viewport 774 pixels are
+  left for content, and below roughly 768 pixels the content column has no usable width at all. The
+  same content reflows normally on GitHub.
+- **Wide tables scroll inside the content column rather than reflowing.** The generator's table style
+  sets no wrapping rule, so a long unbroken identifier or pattern widens its table beyond the column
+  and is reached by a horizontal scrollbar. What could be fixed from this side has been: the values
+  too long for a table cell are stated in their own sections rather than inline, which is why several
+  rows in [halSpecDetailed.md](halSpecDetailed.md) name a value and point to it instead of quoting it.
+  The residual width comes from ordinary `TR-181` identifiers, which cannot be shortened.
+- **The generated page does not declare its language, and renders in limited-quirks mode.** The root
+  element carries an unsubstituted template placeholder in place of a language code, so assistive
+  technology cannot determine the document language, and the transitional doctype the generator emits
+  puts the browser into limited-quirks layout.
+
+These are recorded rather than repaired because the files that produce them are not part of this
+repository: the generator is cloned at build time into `docs/build`, which `docs/.gitignore` excludes,
+and the documentation plan for this work places the generator and the Doxygen toolchain out of scope.
+Changing them would alter the generated output of every `RDK-B` HAL repository that uses the same
+generator, which is a separate change with its own compatibility analysis.
+
 The GPON HAL is the interface between `RDK-B` middleware and a vendor's `GPON` implementation. It
 differs from most HALs in `RDK-B` in one structural respect that governs everything else in this
 document: **it is not a C header, and no library is linked across the HAL boundary.** The contract
 is a `JSON` Schema, the two participants are separate processes, and they exchange messages over a
 `TCP` socket. There is consequently no header from which to generate an inline API reference, and
 the per-parameter detail that inline documentation would carry for a C HAL is carried instead by
-[`halSpecDetailed.md`](halSpecDetailed.md) in this folder. This is also why the workspace has no
+[halSpecDetailed.md](halSpecDetailed.md) in this folder. This is also why the workspace has no
 `rdkb-halif-gpon` repository: the contract lives here, beside the manager that speaks it
-[`README.md:27`, superproject].
+[the superproject README, line 27].
 
 GponManager is the `RDK-B` middleware that owns `GPON` state, and it is the **client** of this
 interface; the vendor supplies the **server**. The manager presents `ONT` configuration and status
@@ -93,13 +119,13 @@ to the rest of `RDK-B` as a `TR-181` `DML` surface under `Device.X_RDK_ONT`, and
 and writes on that surface into `JSON` HAL requests
 [`source/TR-181/middle_layer_src/gponmgr_dml_hal.c`]. No separate middleware service sits between
 the `RDK-B` stack and this interface — the superproject inventory records `GPON` as having no
-service dependency [`README.md:102`, superproject] — because the manager in this repository is
+service dependency [the superproject README, line 102] — because the manager in this repository is
 itself the owning service. That is what the second box in the diagram above represents.
 
 **The object tree is a vendor extension, not a Broadband Forum model, and that decides where its
 semantics come from.** Every parameter lives under `Device.X_RDK_ONT`, and the `X_` prefix marks an
 extension to the `TR-181` `Device:2` root data model rather than a branch the Broadband Forum
-defines. The published model this repository was checked against is **`Device:2.21`** — the
+defines. The published model this repository was checked against is <b>`Device:2.21`</b> — the
 Broadband Forum `Device:2` root data model at release `2.21`, published as
 [`TR-181 Device:2, release 2.21`](https://cwmp-data-models.broadband-forum.org/tr-181-2-21-0-cwmp.html) —
 which defines the interface-object conventions the schema borrows and contains no occurrence of
@@ -124,17 +150,17 @@ and how to call it — initialization order, threading, memory, timeouts and err
 protocol tier is `Non functional requirements` and `Interface API Documentation`, which answer what
 the wire actually looks like, what varies by build, and what happens when a call fails. Within that
 second tier `API Surface` is the index: it names every action and every object segment, and marks
-the point past which the detail continues into [`halSpecDetailed.md`](halSpecDetailed.md).
+the point past which the detail continues into [halSpecDetailed.md](halSpecDetailed.md).
 
 **One verification limit applies to this whole document.** `GPON` is not available on the `HUB6` or
-`XER10` reference platforms [`README.md:102-103`, superproject], so no statement here has been
+`XER10` reference platforms [the superproject README, lines 102-103], so no statement here has been
 confirmed by running the HAL. Everything asserted is derived from the shipped schemas, the client
 configuration, the manager source and the pinned transport library, and each claim carries the
 locator that establishes it. Where none of those establishes a behaviour, this document says so
 instead of filling the gap.
 
 *Derived from `hal_schema/gpon_hal_schema.json`, `source/TR-181/middle_layer_src/gponmgr_dml_hal.c`,
-`config/RdkGponManager.xml` and the superproject `README.md`.*
+`config/RdkGponManager.xml` and the superproject README.*
 
 ## Optional Components
 
@@ -157,7 +183,7 @@ listens on the same port either way and cannot infer the variant from the port i
 `PhysicalMedia` parameter definitions, taking the total from 90 to 95. Three of the five are
 writable, which takes the writable surface from 8 parameters to 11, and two of them introduce the
 `boolean` datatype, which does not appear anywhere in the default schema. The complete comparison,
-per parameter, is in [`halSpecDetailed.md`](halSpecDetailed.md).
+per parameter, is in [halSpecDetailed.md](halSpecDetailed.md).
 
 **A second effect of the same flag, which is easy to miss because it is not in either schema.** In
 the `WAN_MANAGER_UNIFICATION_ENABLED` build the manager itself launches the vendor server before
@@ -175,7 +201,7 @@ schemas declare the same eleven actions, the same nine enumerations and the same
 three `TR69` entries — and it is a read-scoping list rather than a build option: a vendor that does
 not implement one of those paths answers `Not Supported`, as `Internal Error Handling` describes.
 The companion `setParameterOptionalList` is empty in both schemas, which is a defect in the shipped
-contract rather than an option; [`halSpecDetailed.md`](halSpecDetailed.md) records it.
+contract rather than an option; [halSpecDetailed.md](halSpecDetailed.md) records it.
 
 *Derived from `config/gpon_manager_conf.json`, `config/gpon_manager_wan_unify_conf.json`,
 `source/TR-181/middle_layer_src/gponmgr_dml_hal.c:57-61,100-108` and both files under
@@ -378,9 +404,9 @@ fault is the caller's fault. Here the vendor implementation is a **separate proc
   `json_hal_is_client_connected()`, which is why initialization polls it instead of assuming success.
 
 **The exchange is `JSON-RPC` style over a `TCP` socket**, as the transport library's own description
-of both participants states [`json-hal-library/README.md:50,132`]: a request names an action, and the
-reply that answers it is matched to the request by identifier rather than by position on the
-connection.
+of both participants states [the `json-hal-library` README, lines 50 and 132]: a request names an
+action, and the reply that answers it is matched to the request by identifier rather than by
+position on the connection.
 
 **The socket is loopback-only, so both processes run on the same device.** The client sets its host
 to `127.0.0.1` and takes only the port from the configuration file, so the server address is not
@@ -471,7 +497,7 @@ count rather than freeing unconditionally.
     structure, so a reply spanning several chunks is not guaranteed to arrive whole.** Any read that
     does not fill the buffer is treated as the end of the message, so a reply delivered in segments
     that happen to be short is parsed early as a truncated document; the transport carries no length
-    prefix and no delimiter with which to detect it. `Contract Defects` in `halSpecDetailed.md`
+    prefix and no delimiter with which to detect it. `Contract Defects` in [halSpecDetailed.md](halSpecDetailed.md)
     records this with its locator.
 - **Do not reuse a request handle for a second send.** Correlation depends on each exchange carrying
   its own `reqId`, and the header helper allocates one per call.
@@ -500,7 +526,7 @@ two-process model: a vendor's allocation policy cannot reach the manager's heap,
   two share no address space and no allocator. That is a statement about pointers and
   allocations, and it must not be read as isolation from a hostile peer: the peer's DATA does
   cross the boundary, and this manager copies received JSON names and values into fixed buffers
-  without always bounding them. `Contract Defects` in `halSpecDetailed.md` records those copies
+  without always bounding them. `Contract Defects` in [halSpecDetailed.md](halSpecDetailed.md) records those copies
   with their locators. A malformed or hostile message can therefore corrupt manager memory
   through the parsing path, which is a different exposure from the one a C HAL in-process has
   and not an absence of exposure.
@@ -549,7 +575,7 @@ a request helper nor an accessor for a response. The practical consequence for a
 exchange cannot be relied on to enumerate anything — **a caller tracks its own subscriptions
 locally**, which is what GponManager does implicitly by subscribing from a fixed list at startup
 [`source/GponManager/gponmgr_controller.c`], and treats any content it does receive as a
-vendor extension rather than as contract. [`halSpecDetailed.md`](halSpecDetailed.md) records the same
+vendor extension rather than as contract. [halSpecDetailed.md](halSpecDetailed.md) records the same
 finding as a contract defect.
 
 **Required fields differ between `subscribeEvent` and `publishEvent`, which is the most common
@@ -558,8 +584,8 @@ A `subscribeEvent` parameter entry requires `name` and `notificationType` and ca
 `publishEvent` parameter entry requires `name`, `type` and `value` — the datatype travels with the
 event, so a receiver does not have to look the parameter up to interpret its value.
 
-**`notificationType` admits exactly two values: `interval` and `onChange`, with `onChange` as the
-default.** This is worth stating sharply because the transport library defines two further types,
+<b>`notificationType` admits exactly two values: `interval` and `onChange`, with `onChange` as the
+default.</b> This is worth stating sharply because the transport library defines two further types,
 `onChangeSync` and `onChangeSyncTimeout`, behind its `JSON_BLOCKING_SUBSCRIBE_EVENT` compile guard
 [`json-rpc-common/json_rpc_common.h:53-56`].
 Those two belong to another `RDK-B` `JSON` HAL's contract, **not to this one**: neither appears in
@@ -597,7 +623,7 @@ caller obtains them either by polling with `getParameters` — which is availabl
 by relying on a vendor that publishes them without a subscription, which the schema permits and does
 not require. A caller must not treat the absence of events for those parameters as an indication that
 their value has not changed. This asymmetry is a defect in the shipped contract rather than a design
-choice, and [`halSpecDetailed.md`](halSpecDetailed.md) records it, together with the three
+choice, and [halSpecDetailed.md](halSpecDetailed.md) records it, together with the three
 subscriptions the manager itself issues that a validating server rejects for the same reason.
 
 **What an event handler may and may not do, restated here because this is where a caller meets it.**
@@ -622,14 +648,14 @@ client's own subscription list is not cleared when the connection drops — only
 it — and a second subscription for the same path is appended rather than replacing the first, so a
 callback registered twice is invoked twice per event. A caller that re-subscribes after every
 reconnection therefore needs either an idempotent handler or a full teardown and re-initialization of
-the client between attempts. [`halSpecDetailed.md`](halSpecDetailed.md) carries the mechanism and the
+the client between attempts. [halSpecDetailed.md](halSpecDetailed.md) carries the mechanism and the
 locators.
 
 **Neither is a `result` on a subscription proof that the subscription exists.** The transport reports
 a completed exchange, not an accepted subscription: a `result` carrying `Failed`, `Invalid Argument`
 or `Not Supported` is reported to the caller as success, and the failure is not visible through the
 subscribe call at all. The only positive evidence that a subscription is live is the arrival of a
-`publishEvent`; [`halSpecDetailed.md`](halSpecDetailed.md) sets out what a caller can and cannot
+`publishEvent`; [halSpecDetailed.md](halSpecDetailed.md) sets out what a caller can and cannot
 distinguish.
 
 **Vendor obligation.** A server must acknowledge every `subscribeEvent` with a `result` — silence
@@ -742,7 +768,7 @@ into the document. What a caller should do differs per value:
 | `Invalid Argument` | A parameter name, type or value was not acceptable. | Treat as a defect in the request rather than a transient condition. Check the name against the schema's `name` constraint, the `type` against the parameter's declared datatype, and the value against its constraint. |
 | `Not Supported` | The vendor does not implement this parameter or action. | Treat as a normal outcome for a path reachable only through `getParameterOptionalList`, and stop requesting it. See `Optional Components`. |
 
-**`Invalid Argument` and `Not Supported` are the two most often mishandled**, because both are
+<b>`Invalid Argument` and `Not Supported` are the two most often mishandled</b>, because both are
 permanent for a given request and neither should be retried. Retrying either produces load without
 progress.
 
@@ -763,7 +789,7 @@ releases the reply before returning and never inspects `Result.Status`, so a sub
 `Failed`, `Invalid Argument` or `Not Supported` is reported to the caller exactly as an accepted one
 is. A caller cannot act on the status of a subscription, and must instead treat the arrival of a
 `publishEvent` as the only evidence that one is live;
-`Asynchronous Notification Model` and [`halSpecDetailed.md`](halSpecDetailed.md) set out what is and
+`Asynchronous Notification Model` and [halSpecDetailed.md](halSpecDetailed.md) set out what is and
 is not distinguishable.
 
 **How the manager treats the status, as a worked reference.** The set path reads the status and
@@ -957,8 +983,7 @@ device after use.
 `json_rpc_common.h:94-98`, `json_hal_client.c:437-439,717` and `tcp_server.c:71-73` at the pinned
 transport revision; the `Ploam`, `PhysicalMedia` and `TR69` parameter definitions in both files under
 `hal_schema/`; the absence of any logging, redaction or sensitivity requirement in those files and in
-`config/`; and the register of `rdkb-halif-moca/docs/pages/halSpec.md` and
-`rdkb-halif-mso/docs/pages/halSpec.md`.*
+`config/`; and the register of the `rdkb-halif-moca` and `rdkb-halif-mso` HAL specifications.*
 
 ### Memory and performance requirements
 
@@ -968,7 +993,7 @@ described in `Memory Model`, and copies any value it needs out of a reply before
 **Vendor implementation responsibility.** A vendor server allocates whatever it needs internally and
 is solely responsible for releasing it. No allocation and no pointer crosses the process boundary,
 so a vendor's allocation policy cannot affect the caller's heap. Received data does cross it, and
-`Contract Defects` in `halSpecDetailed.md` records where this manager copies peer-supplied names and
+`Contract Defects` in [halSpecDetailed.md](halSpecDetailed.md) records where this manager copies peer-supplied names and
 values into fixed buffers without bounding them; the process boundary does not protect the manager
 from its own handling of what it receives.
 
@@ -1024,14 +1049,14 @@ qualifications a tester needs:
 - **Do not treat the shipped example messages as pre-validated fixtures.** The repository ships eight
   `hal_schema/example_*_msg.json` files, and they are illustrative rather than conformance-tested:
   they are not all valid against the schema they sit beside, and one is valid but names a schema path
-  belonging to a different HAL. [`halSpecDetailed.md`](halSpecDetailed.md) records each file's
+  belonging to a different HAL. [halSpecDetailed.md](halSpecDetailed.md) records each file's
   disposition and publishes corrected worked exchanges. The examples themselves are left unmodified,
   because they are shipped artefacts that other consumers may depend on.
 
 **Static conformance of the contract itself is also checkable, and is not clean.** Both schemas fail
 the `draft-07` meta-schema in exactly two places each, in both cases an empty `anyOf` array that no
 instance can satisfy. Neither is repaired here — the schemas are the contract and this documentation
-does not edit them — and both are recorded in [`halSpecDetailed.md`](halSpecDetailed.md), together
+does not edit them — and both are recorded in [halSpecDetailed.md](halSpecDetailed.md), together
 with the consequence for `deleteObject` that `API Surface` states. A test suite adding a meta-schema
 check should expect those two failures per file and fail on any third.
 
@@ -1041,12 +1066,12 @@ derived from, which makes staleness detectable from a diff rather than from a re
 files that matter most are the two schemas, the two client configuration files and
 `source/TR-181/middle_layer_src/gponmgr_dml_hal.c`, since a change to any of them can invalidate a
 statement here without touching this file. The responsible reviewer is the repository's code owner,
-**`@rdkcentral/wanmanager-maintainers`** [`.github/CODEOWNERS:5`], and a pull request that changes any
+<b>`@rdkcentral/wanmanager-maintainers`</b> [`.github/CODEOWNERS:5`], and a pull request that changes any
 cited file should carry a review of the affected topics.
 
 *Derived from `.github/CODEOWNERS:5`; the meta-schema and instance validation of both files under
-`hal_schema/` and of the eight `hal_schema/example_*_msg.json` files; and the register of
-`rdkb-halif-moca/docs/pages/halSpec.md`.*
+`hal_schema/` and of the eight `hal_schema/example_*_msg.json` files; and the register of the
+`rdkb-halif-moca` HAL specification.*
 
 ### Licensing
 
@@ -1055,7 +1080,7 @@ vendor implementation of the HAL server is expected to be released under the sam
 
 The licence text and the attribution notice ship with the repository as `LICENSE`, `COPYING` and
 `NOTICE` at its root, and are rendered alongside this specification in the generated documentation
-through the `LICENSE.md`, `COPYING.md` and `NOTICE.md` symlinks in this folder, so the terms are
+through the [LICENSE.md](LICENSE.md), [COPYING.md](COPYING.md) and [NOTICE.md](NOTICE.md) symlinks in this folder, so the terms are
 verifiable from inside the documentation set. Every source file in the repository carries the
 Apache-2.0 header, and files added by this documentation work preserve it.
 
@@ -1096,9 +1121,9 @@ revision. A vendor implementing the server side uses `json_hal_server_init()`,
 `json_hal_server_publish_event()` and `json_hal_server_terminate()` from that header.
 
 **The `json-c` dependency, stated in both of its forms because either alone misleads.** The
-transport library declares its dependency as **`json-c (0.11)`**, which is the **declared minimum**
+transport library declares its dependency as <b>`json-c (0.11)`</b>, which is the **declared minimum**
 [`json-hal-library/README.md:56`, and again at `:140`]; its upstream native build, however, is
-exercised against the **`json-c-0.15-20200726`** revision
+exercised against the <b>`json-c-0.15-20200726`</b> revision
 [`json-hal-library/cov_docker_script/component_config.json:11`]. An integrator who reads only the
 first will under-provision relative to what upstream actually tests; one who reads only the second
 will overstate what the library requires. Both are therefore given, each labelled with what it is.
@@ -1127,17 +1152,17 @@ runtime one. `Variability Management` and `Platform or Product Customization` se
 what it changes.
 
 *Derived from `source/TR-181/middle_layer_src/Makefile.am:39`, `source/GponManager/Makefile.am:31`,
-`json-hal-library/README.md:56,140` and
+the `json-hal-library` README at lines 56 and 140, and
 `json-hal-library/cov_docker_script/component_config.json:11` at the pinned transport revision.*
 
 ### Variability Management
 
 **The interface is versioned, and its version is not the caller's to change.** The envelope's
-`version` field is bound to `definitions.schemaVersion`, a `const` of **`0.0.1`** in both shipped
-files, whose own description states: *"DO NOT modify the value of the version string. HAL operation
-cannot be performed without correct supported version."* The schema file as a whole carries the same
-instruction at its top level: *"DO NOT modify the contents of this schema file. RDK community team
-make necessary changes and release."* Adjusting the interface is an architecture decision released
+`version` field is bound to `definitions.schemaVersion`, a `const` of <b>`0.0.1`</b> in both shipped
+files, whose own description states: "DO NOT modify the value of the version string. HAL operation
+cannot be performed without correct supported version." The schema file as a whole carries the same
+instruction at its top level: "DO NOT modify the contents of this schema file. RDK community team
+make necessary changes and release." Adjusting the interface is an architecture decision released
 through this repository; a vendor aligns its implementation with a released version of the contract
 rather than editing the deployed file. Each released interface is versioned per Semantic Versioning
 2.0.0.
@@ -1291,7 +1316,7 @@ duplicate-delivery caveat `Asynchronous Notification Model` sets out.
 **Before any request:** initialize, run, and confirm connectivity. A request issued before
 `json_hal_is_client_connected()` reports success is issued into an unconnected client.
 
-**`getSchema` before relying on a schema path.** A caller that needs to know which schema file the
+<b>`getSchema` before relying on a schema path.</b> A caller that needs to know which schema file the
 server is using asks with `getSchema` and reads `SchemaInfo.FilePath` from the
 `getSchemaResponse`. It is not a prerequisite for anything else — the client already has its own
 schema path from its configuration — and what it returns is the server's view, which is the only way
@@ -1324,9 +1349,9 @@ The shipped `hal_schema/example_getSchemaResponse_msg.json` demonstrates the cas
 returns `/etc/rdk/hal_schemas/xtm_hal_schema.json`, a directory no `GPON` configuration names and a
 contract belonging to another HAL. A caller that dereferenced it would load the wrong schema from a
 path a peer chose; a caller that compares it detects a misconfigured deployment.
-[`halSpecDetailed.md`](halSpecDetailed.md) publishes the corrected exchange.
+[halSpecDetailed.md](halSpecDetailed.md) publishes the corrected exchange.
 
-**`subscribeEvent` before any `publishEvent` can arrive.** An event is not sent for a parameter that
+<b>`subscribeEvent` before any `publishEvent` can arrive.</b> An event is not sent for a parameter that
 was never subscribed, and only a parameter in the eighteen-entry table in
 `Asynchronous Notification Model` enters the event mechanism at all. Of those eighteen, only the
 optical status and the `VEIP` administrative state can be named in a `subscribeEvent` a validating
@@ -1368,7 +1393,7 @@ established, and why no diagram is drawn from it.
 For a C HAL this topic lists the enumerations, structures and macros a caller must construct or
 interpret. **There is no C header here and therefore no C type**; the equivalents are schema
 definitions, and they fall into four groups. The complete per-definition inventory is in
-[`halSpecDetailed.md`](halSpecDetailed.md); what follows are the shapes a caller must be able to
+[halSpecDetailed.md](halSpecDetailed.md); what follows are the shapes a caller must be able to
 build and read.
 
 **The envelope.** Four required fields, three of them bound to a definition rather than declared
@@ -1444,7 +1469,7 @@ using them would name a datatype this contract does not.
 
 This topic is the boundary between the overview above and the protocol depth below. A reader who came
 for an orientation can stop here; a reader with a protocol question starts here and continues into
-[`halSpecDetailed.md`](halSpecDetailed.md), which carries every parameter definition, every object
+[halSpecDetailed.md](halSpecDetailed.md), which carries every parameter definition, every object
 path, the enumeration appendix, worked message exchanges and the record of contract defects.
 
 **Where a C HAL has functions, this interface has eleven action values.** They are the complete
@@ -1467,27 +1492,27 @@ callable surface, declared by `definitions.action` in both schemas in the same o
 **Eight actions bind a payload; three travel as the bare envelope.** The schema attaches a
 conditional payload requirement, through its eight `allOf` branches, to `setParameters`,
 `getParameters`, `deleteObject`, `subscribeEvent`, `publishEvent`, `result`, `getSchemaResponse` and
-`getParametersResponse`. The three with no binding are **`getSchema`, `getActiveSubscriptions` and
-`getActiveSubscriptionsResponse`**: for these the four envelope fields are the entire message.
+`getParametersResponse`. The three with no binding are <b>`getSchema`, `getActiveSubscriptions` and
+`getActiveSubscriptionsResponse`</b>: for these the four envelope fields are the entire message.
 
 **There is no `setParametersResponse`.** This is the single most commonly mis-stated fact about this
-protocol, so it is stated plainly: a write is acknowledged by the generic **`result`** action carrying
+protocol, so it is stated plainly: a write is acknowledged by the generic <b>`result`</b> action carrying
 `Result.Status`. A caller waiting for an action name symmetrical with `setParameters` waits for a
 message the contract does not define. Two of the eleven actions are answered by `result` rather than
 by a dedicated response — `setParameters` and `subscribeEvent` — while `getParameters`, `getSchema`
 and `getActiveSubscriptions` each have a matching named response.
 
-**`deleteObject` is not usable under either shipped schema.** Its payload definition carries an empty
+<b>`deleteObject` is not usable under either shipped schema.</b> Its payload definition carries an empty
 `anyOf`, a construct no instance can satisfy, so no schema-valid delete message exists to send. It is
 listed above for completeness, because it is a member of the enumeration a server must be able to
 parse, but it must be treated as **unsupported**: a caller should not attempt object deletion through
 this interface, and a vendor need not implement it. This is a defect in the shipped contract rather
 than a design decision, and it is recorded rather than worked around — the schemas are the contract,
 and editing them is outside the scope of this documentation.
-[`halSpecDetailed.md`](halSpecDetailed.md) records it, together with the identical defect on
+[halSpecDetailed.md](halSpecDetailed.md) records it, together with the identical defect on
 `setParameterOptionalList`.
 
-**The object tree.** Every parameter lives under **`Device.X_RDK_ONT`**, across seven named segments:
+**The object tree.** Every parameter lives under <b>`Device.X_RDK_ONT`</b>, across seven named segments:
 
 | Segment | Path | Parameters (default / variant) | What it covers |
 | --- | --- | --- | --- |
@@ -1522,18 +1547,18 @@ validates incoming requests strictly against the shipped schema will reject the 
 `PhysicalMedia`, `Gem` and `Veip` prefix reads, while accepting the other four. The shipped
 `hal_schema/example_getParameters_msg.json` is an instance of exactly that case — it names
 `Device.X_RDK_ONT.PhysicalMedia.` and does not validate — and
-[`halSpecDetailed.md`](halSpecDetailed.md) publishes a corrected form. A caller wanting a bulk read of
+[halSpecDetailed.md](halSpecDetailed.md) publishes a corrected form. A caller wanting a bulk read of
 an instanced segment should address it per instance, and a vendor supporting prefix reads for those
 segments should document that it accepts an extension to the shipped contract.
 
 **Where the contract is:** the two schema files
-[`gpon_hal_schema.json`](../../hal_schema/gpon_hal_schema.json) and
-[`gpon_wan_unify_hal_schema.json`](../../hal_schema/gpon_wan_unify_hal_schema.json), and the two
-client configuration files [`gpon_manager_conf.json`](../../config/gpon_manager_conf.json) and
-[`gpon_manager_wan_unify_conf.json`](../../config/gpon_manager_wan_unify_conf.json). Per-parameter
+[`gpon_hal_schema.json`](https://github.com/rdkcentral/gpon-manager/blob/a55601f2183e4a494cccccfbf3777a5663ef298a/hal_schema/gpon_hal_schema.json) and
+[`gpon_wan_unify_hal_schema.json`](https://github.com/rdkcentral/gpon-manager/blob/a55601f2183e4a494cccccfbf3777a5663ef298a/hal_schema/gpon_wan_unify_hal_schema.json), and the two
+client configuration files [`gpon_manager_conf.json`](https://github.com/rdkcentral/gpon-manager/blob/a55601f2183e4a494cccccfbf3777a5663ef298a/config/gpon_manager_conf.json) and
+[`gpon_manager_wan_unify_conf.json`](https://github.com/rdkcentral/gpon-manager/blob/a55601f2183e4a494cccccfbf3777a5663ef298a/config/gpon_manager_wan_unify_conf.json). Per-parameter
 detail — every path, datatype, constraint, access and description, the object index, the enumeration
 appendix, worked exchanges per workflow and the contract defects — is in
-[`halSpecDetailed.md`](halSpecDetailed.md) and is not repeated here.
+[halSpecDetailed.md](halSpecDetailed.md) and is not repeated here.
 
 *Derived from `definitions.action`, the eight `allOf` branches, `definitions.deleteObject`, and the
 object and parameter `name` constraints in both files under `hal_schema/`;
@@ -1576,7 +1601,7 @@ sequenceDiagram
 ```
 
 Four details in that exchange are worth drawing out, because each is a place implementations diverge.
-The write is answered by **`result`**, not by a response action named after the request. The read is
+The write is answered by <b>`result`</b>, not by a response action named after the request. The read is
 answered by `getParametersResponse`, which is one of the actions that *does* have a dedicated name —
 the asymmetry is in the contract, not in the diagram. The read is scoped to a singleton object prefix,
 `Device.X_RDK_ONT.Gtc.`, which is addressable for the reason `API Surface` gives. And every reply is
