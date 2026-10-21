@@ -20,8 +20,7 @@ five variant-only definitions.
 
 Transport behaviour is that of `json-hal-library` at commit
 `86a0a300b976f8e3295064af8fb3fd1c793c9e64`. `GPON` is not available on the `HUB6` or `XER10`
-reference platforms, so every statement here describes the shipped schemas, configuration and source
-rather than behaviour observed on a device.
+reference platforms, so no behaviour described here has been observed on a device.
 
 ## Transport and Protocol
 
@@ -201,7 +200,7 @@ peer at runtime, where nothing validates.
 | `value` present but `null` | **Invalid** against either leaf kind: every leaf constrains `value` by type. **Valid** against an open object, where `value` is an unconstrained extra member | Delivered unchecked. A caller inspects the `value` node before extracting it with `json_hal_get_param()` |
 | A required member of a `params` entry missing | **Invalid for all four kinds.** `required` is set by the action: `name` for `getParameters` and `deleteObject`, `name`/`type`/`value` for `setParameters`, `getParametersResponse` and `publishEvent`, `name`/`notificationType` for `subscribeEvent` | Delivered unchecked. For a missing `value` the extraction helper's outcome depends on the datatype; see `Missing value: five datatypes fail silently` |
 | `params` present but an empty array | Invalid for every action that binds `params`, because each branch sets `minItems: 1`. Valid for the three actions with no binding, which is what the client's header helper produces for two of them | Delivered unchecked |
-| Two `params` entries naming the **same parameter** with different content | **Valid.** `uniqueItems` compares whole entry objects, not the `name` member, so it rejects only a byte-identical repeat. A two-entry `setParameters` on `Device.X_RDK_ONT.PhysicalMedia.1.RxPower.SignalLevelLowerThreshold` carrying `-30` and `-25` validates, as does a `subscribeEvent` naming `Device.X_RDK_ONT.PhysicalMedia.1.Status` twice with `interval` and `onChange` | Delivered unchecked. `result` carries one `Status` for the whole message, so a caller cannot learn which value was applied |
+| Two `params` entries naming the **same parameter** with different content | **Valid.** `uniqueItems` compares whole entry objects, not the `name` member, so it rejects only JSON-equal entries: the same members with equal values, in any member order. A two-entry `setParameters` on `Device.X_RDK_ONT.PhysicalMedia.1.RxPower.SignalLevelLowerThreshold` carrying `-30` and `-25` validates, as does a `subscribeEvent` naming `Device.X_RDK_ONT.PhysicalMedia.1.Status` twice with `interval` and `onChange` | Delivered unchecked. `result` carries one `Status` for the whole message, so a caller cannot learn which value was applied |
 | An unknown member alongside the four required envelope fields | Valid. The root declares no `additionalProperties: false` | Ignored: the pinned transport reads no member it does not expect |
 | An unknown member inside a `params` entry | **Invalid** against a closed leaf and against `ontPhysicalMediaAlarmObj`. **Valid** against `ontTR69url` and against all 25 open object definitions — see `Contract Defects` | Delivered unchecked |
 | A `type` label that disagrees with the parameter's declared datatype | **Invalid** against either leaf kind, which binds `type` to a `const`. **Valid** against any object definition, which declares no `type` at all | Delivered unchecked; nothing cross-checks the label against the value |
@@ -381,7 +380,7 @@ only one the `wan_unify` variant extends. The 14 `Alarm.` parameters use upperca
 sub-objects group the optical measurements: `RxPower.`, `TxPower.`, `Voltage.`, `Bias.`,
 `Temperature.` and `PerformanceThreshold.`, each listed in `Object Index`.
 
-| `TR-181` Parameter | Type and Constraint | Access | Description |
+| `TR-181` Parameter · definition key | Type and Constraint | Access | Description |
 | --- | --- | --- | --- |
 | `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.DACT` · `ontPhysicalMediaAlarmDact` | `string`; `alarmEnumList` | Read-Only, subscribable | Deactivate ONU-ID |
 | `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.DIS` · `ontPhysicalMediaAlarmDis` | `string`; `alarmEnumList` | Read-Only, subscribable | Disabled ONU |
@@ -433,7 +432,7 @@ including `C-VLAN` and `S-VLAN` tag handling. Fourteen of the eighteen are reach
 the contract; the four reachable through `getParameterSupportedList` are `PortId`, `ReceivedFrames`,
 `TransmittedFrames` and `TrafficType`. Nothing in this segment is writable or subscribable.
 
-| `TR-181` Parameter | Type and Constraint | Access | Description |
+| `TR-181` Parameter · definition key | Type and Constraint | Access | Description |
 | --- | --- | --- | --- |
 | `Device.X_RDK_ONT.Gem.{i}.EthernetFlow.Egress.C-VLAN.Dei` · `ontGemEthernetFlowEgressCVlanDei` | `unsignedInt`; integer, minimum 0 | Read-Only, optional read | Drop Eligible Indicator |
 | `Device.X_RDK_ONT.Gem.{i}.EthernetFlow.Egress.C-VLAN.Pcp` · `ontGemEthernetFlowEgressCVlanPcp` | `unsignedInt`; integer, minimum 0 | Read-Only, optional read | Priority Code Point |
@@ -460,7 +459,7 @@ the contract; the four reachable through `getParameterSupportedList` are `PortId
 its `Q-VLAN` Ethernet flows. Four of the eight writable parameters in the default schema live here.
 Four definitions in this segment carry a malformed `name` pattern; see `Contract Defects`.
 
-| `TR-181` Parameter | Type and Constraint | Access | Description |
+| `TR-181` Parameter · definition key | Type and Constraint | Access | Description |
 | --- | --- | --- | --- |
 | `Device.X_RDK_ONT.Veip.{i}.AdministrativeState` · `ontVeipAdministrativeState` | `string`; `lockEnumList` | Read-Only, subscribable | Informs the current administrative state of Veip interface from OMCI domain |
 | `Device.X_RDK_ONT.Veip.{i}.EthernetFlow.Egress.Q-VLAN.Dei` · `ontVeipEthernetFlowEgressQVlanDei` | `unsignedInt`; integer, minimum 0 | Read-Only | Drop Eligible Indicator |
@@ -482,7 +481,7 @@ Four definitions in this segment carry a malformed `name` pattern; see `Contract
 registration timers and the `PLOAM` message counters. `Ploam` is a singleton, so every path here is
 an exact `const` with no instance number, and the whole segment is addressable as a read prefix.
 
-| `TR-181` Parameter | Type and Constraint | Access | Description |
+| `TR-181` Parameter · definition key | Type and Constraint | Access | Description |
 | --- | --- | --- | --- |
 | `Device.X_RDK_ONT.Ploam.ActivationCounter` · `ontPloamActivationCounter` | `unsignedInt`; integer, minimum 0 | Read-Only | The number of times the ONU pass through O5 between reboots |
 | `Device.X_RDK_ONT.Ploam.MicErrors` · `ontPloamMicErrors` | `unsignedInt`; integer, minimum 0 | Read-Only | The number of packets with MIC errors |
@@ -501,7 +500,7 @@ an exact `const` with no instance number, and the whole segment is addressable a
 and uncorrected counts. A singleton, addressable as a read prefix. Nothing in this segment is
 writable or subscribable.
 
-| `TR-181` Parameter | Type and Constraint | Access | Description |
+| `TR-181` Parameter · definition key | Type and Constraint | Access | Description |
 | --- | --- | --- | --- |
 | `Device.X_RDK_ONT.Gtc.CorrectedFecBytes` · `ontGtcCorrectedFecBytes` | `unsignedLong`; integer, minimum 0 | Read-Only | Count of FEC codewords that contained errors but were corrected by the FEC function. Reference: ITU-T G.988, Clause 9.2.9 and 9.2.22 |
 | `Device.X_RDK_ONT.Gtc.CorrectedFecCodeWords` · `ontGtcCorrectedFecCodeWords` | `unsignedLong`; integer, minimum 0 | Read-Only | Count of FEC codewords that contained errors but were corrected by the FEC function. Reference: ITU-T G.988, Clause 9.2.9 and 9.2.2 |
@@ -517,7 +516,7 @@ writable or subscribable.
 `Device.X_RDK_ONT.Omci.` — 3 parameter definitions. `OMCI` message counts and the `MIC` error count.
 A singleton, addressable as a read prefix. Nothing in this segment is writable or subscribable.
 
-| `TR-181` Parameter | Type and Constraint | Access | Description |
+| `TR-181` Parameter · definition key | Type and Constraint | Access | Description |
 | --- | --- | --- | --- |
 | `Device.X_RDK_ONT.Omci.MicErrors` · `ontOmciMicErrors` | `unsignedInt`; integer, minimum 0 | Read-Only | Count of MIC errors |
 | `Device.X_RDK_ONT.Omci.RxBaseLineMessageCountValid` · `ontOmciRxBaseLineMessageCountValid` | `unsignedInt`; integer, minimum 0 | Read-Only | Count of OMCI messages |
@@ -530,7 +529,7 @@ A singleton, addressable as a read prefix. Nothing in this segment is writable o
 `getParameterSupportedList` and `getParameterOptionalList`. `url` is the one parameter definition in
 either file that omits `additionalProperties: false`; see `Contract Defects`.
 
-| `TR-181` Parameter | Type and Constraint | Access | Description |
+| `TR-181` Parameter · definition key | Type and Constraint | Access | Description |
 | --- | --- | --- | --- |
 | `Device.X_RDK_ONT.TR69.AssociatedTag` · `ontTR69AssociatedTag` | `unsignedInt`; integer, minimum 0 | Read-Only | Tag to transfer information from OMCI domain to TR69 domain |
 | `Device.X_RDK_ONT.TR69.url` · `ontTR69url` | `string`; string, otherwise unconstrained | Read-Only | ACS URI to be used by DNS client to resolve to an IP address |
@@ -589,7 +588,7 @@ sequenceDiagram
     participant Cli as json_hal_client
     participant Srv as Vendor JSON HAL Server
     Mgr->>Cli: json_hal_client_get_request_header("getParameters")
-    Mgr->>Cli: json_hal_add_param(request, GET_PARAMETER_METHOD, &param)
+    Mgr->>Cli: json_hal_add_param(request, GET_REQUEST_MESSAGE, &param)
     Mgr->>Cli: json_hal_client_send_and_get_reply(request, &reply)
     Cli->>Srv: getParameters, reqId 00000101, params[Device.X_RDK_ONT.Gtc.]
     Srv->>Cli: getParametersResponse, reqId 00000101, params[...]
@@ -1028,7 +1027,7 @@ constrain a vendor server built on the same library.
 | # | Property | What the code does | Consequence |
 |---|---|---|---|
 | 1 | **A send can report success with bytes unsent, in both directions** | Both send loops set `total_bytes_left = strlen(buffer)`, then on each iteration add the `send` return to `total_bytes_sent` **and subtract it from `total_bytes_left`**, continuing only while `total_bytes_sent < total_bytes_left` | The two counters converge from opposite ends, so one partial `send` returning at least half the remaining bytes ends the loop with `RETURN_OK` and the tail unsent. `-1` is fatal, with no distinction for `EINTR` or `EAGAIN`. A successful send is not a delivered message |
-| 2 | **There is no framing, and only the reply path reassembles** | The server hands what one `recv` returned to its handler; the client appends full reads to a `realloc`-grown accumulator and parses when a short read completes it | A request that does not arrive in one read is parsed as a fragment and dropped without a reply. On the reply path completeness is inferred from read length rather than from `JSON` structure, and the accumulator grows without bound |
+| 2 | **There is no framing, and only the reply path reassembles** | See `Message boundaries`; in addition, each full read `realloc`-grows the client's reply accumulator by one buffer | A request that does not arrive in one read is parsed as a fragment and dropped without a reply, so the caller sees it only as a transport failure after its full wait. A reply delivered as a run of full reads grows that accumulator without bound |
 | 3 | **Active client connections are unbounded and unvalidated** | `accept` is followed by an unchecked `malloc`, the node is appended to a global list, and `FD_SET(new_sd, &master_set)` runs with no check that `new_sd < FD_SETSIZE` | Nothing caps concurrent clients, an allocation failure is dereferenced, and a descriptor at or above `FD_SETSIZE` is written outside the `fd_set`. The listen backlog of 32 bounds only the pending queue |
 | 4 | **Subscriptions are unbounded, and publication sends while holding the global lock** | Each accepted subscription is appended with no deduplication and no cap; publication takes `gm_subscription_mutex`, walks the list and calls `socket_send` for each recipient **inside** the lock | Repeated subscribes for one parameter accumulate duplicate entries and duplicate deliveries, and one slow recipient stalls every subscription operation and every other recipient's delivery while its send blocks |
 | 5 | **A malformed event can release a `JSON` object the code then keeps using** | In a client built with `JSON_BLOCKING_SUBSCRIBE_EVENT`, an event without `reqId` makes the receive loop release the object with `json_object_put` and `continue`, and the same object is released again when the block ends; two server-side paths likewise release an object their caller releases again | Later iterations read freed memory and the second release is a double free (`CWE-416`, `CWE-415`), reachable by a malformed message rather than only a hostile one |
@@ -1073,15 +1072,15 @@ nothing else: no diagnostic text, no error code and no per-entry outcome. `Inval
 
 | `Result.Status` | Where it originates | What the caller does |
 | --- | --- | --- |
-| `Success` | Vendor code, through either reply constructor of the pinned server, `create_json_reply_msg` or `json_hal_add_result_status` | Treats the request as accepted. Where the settled value of a write matters, re-reads the parameter with `getParameters` and acts on what comes back: the token alone does not show that a value was applied, persisted or made visible |
-| `Failed` | Vendor code, through either reply constructor | Treats the request as refused. The status covers the whole message, so after a multi-entry `setParameters` the caller re-reads to learn which entries took effect — or writes one entry per message — before any retry, and bounds its retries |
+| `Success` | Vendor code only, through `json_hal_add_result_status` with `RESULT_SUCCESS` in a reply its callback returns with `RETURN_OK`; the pinned server library never generates it | Treats the request as accepted. Where the settled value of a write matters, re-reads the parameter with `getParameters` and acts on what comes back: the token alone does not show that a value was applied, persisted or made visible |
+| `Failed` | The pinned server library whenever the action callback returns anything other than `RETURN_OK`, as a `result` sent in place of the reply the callback built, which is then discarded; and vendor code, through `json_hal_add_result_status` with `RESULT_FAILURE` in a reply its callback returns with `RETURN_OK` | Treats the request as refused. The status covers the whole message, so after a multi-entry `setParameters` the caller re-reads to learn which entries took effect — or writes one entry per message — before any retry, and bounds its retries |
 | `Not Supported` | The pinned server library when no callback is registered for the action or a supported action has no handler, and — in a server built with `JSON_SCHEMA_VALIDATION_ENABLED` — in place of a vendor reply that failed the server's own validation, which is then discarded | Treats the request as refused, without concluding that the parameter is unsupported, since the token may stand in for a non-conforming vendor reply. Re-reads before any retry |
 | `Invalid Argument` | Vendor code only, in a `result` it builds itself: the reply constructors take a `response_msg_type_t` (three members) or an `eResult_t` (two), neither of which includes it, and the string appears nowhere in the pinned library | Treats the request as refused and re-reads before any retry |
 
 A test asserts on the token and on a subsequent `getParameters`, not on a cause or an effect inferred
 from the token.
 
-**Reading the status requires the raw field; the transport's helper answers only "was it `Success`".**
+**Reading the status requires the raw field; the transport's helper reports only whether it is `Success`.**
 `json_hal_get_result_status()` compares `Status` with
 `strncmp(result, JSON_RPC_STATUS_SUCCESS, strlen(JSON_RPC_STATUS_SUCCESS))` and reports through a
 `json_bool`, so it:

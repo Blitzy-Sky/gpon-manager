@@ -4,7 +4,7 @@
 
 | Date | Comment | Version |
 | --- | --- | --- |
-| 2026-08-24 | Initial release. Specifies the GPON `JSON` HAL contract carried by `hal_schema/gpon_hal_schema.json` and by its build-selected variant `hal_schema/gpon_wan_unify_hal_schema.json`, recorded as an `Unreleased` entry in `CHANGELOG.md`. | 1.0.0 |
+| 2026-08-24 | Initial release. Specifies the GPON `JSON` HAL contract carried by `hal_schema/gpon_hal_schema.json` and by its build-selected variant `hal_schema/gpon_wan_unify_hal_schema.json`, recorded as an `Unreleased` entry in [`CHANGELOG.md`](https://github.com/rdkcentral/gpon-manager/blob/main/CHANGELOG.md). | 1.0.0 |
 
 ## Acronyms
 
@@ -61,11 +61,10 @@ between it and the HAL. The rest of `RDK-B` sees `GPON` state as a consumer of t
 
 **The object tree is a vendor extension, not a Broadband Forum model.** Every parameter lives under
 `Device.X_RDK_ONT`, and the `X_` prefix marks an extension to the `TR-181` `Device:2` root data
-model rather than a branch the Broadband Forum defines. The published model this repository was
-checked against is `Device:2.21` — the Broadband Forum `Device:2` root data model at release
-`2.21`, published as
-[`TR-181 Device:2, release 2.21`](https://cwmp-data-models.broadband-forum.org/tr-181-2-21-0-cwmp.html)
-— which supplies the interface-object conventions the schema borrows. Parameter semantics come from
+model rather than a branch the Broadband Forum defines. The interface-object conventions the schema
+borrows are those of the Broadband Forum `Device:2` root data model at release `2.21`, published as
+[`TR-181 Device:2, release 2.21`](https://cwmp-data-models.broadband-forum.org/tr-181-2-21-0-cwmp.html).
+Parameter semantics come from
 the optical standards the schema descriptions cite — `ITU-T G.988` for the `OMCI` managed entities
 and their counters, and `ITU-T G.9807` for three `GTC` error counters — and from the manager's
 `TR-181` data-model description, `config/RdkGponManager.xml`.
@@ -78,8 +77,7 @@ associated tag handed from the `OMCI` domain to the `TR-069` domain (`TR69`). `A
 the seven segments with their parameter counts.
 
 `GPON` is not available on the `HUB6` or `XER10` reference platforms, so the behaviour stated here
-rests on the shipped schemas, the client configuration, the manager source and the pinned transport
-library rather than on observation of a running HAL.
+has not been observed on a running HAL.
 
 Diagrams are fenced `mermaid` blocks. They render on GitHub; the generated documentation site shows
 their source text, keeps a fixed-width navigation pane that leaves little room on a narrow viewport,
@@ -140,7 +138,7 @@ request.
 - `json_hal_client_send_and_get_reply()` — send and wait for the correlated reply
 - `json_hal_client_send_and_get_reply_with_timeout()` — the same, with a caller-supplied wait
 - `json_hal_client_subscribe_event()` — register a callback and subscribe one event
-- `json_hal_get_result_status()` — read `Result.Status` out of a reply
+- `json_hal_get_result_status()` — test whether a reply's `Result.Status` is `Success`
 - `json_hal_get_total_param_count()` and `json_hal_get_param()` — walk a reply's `params` array
 - `json_hal_client_terminate()` — tear the client down
 
@@ -196,8 +194,8 @@ into the calling process; here the vendor implementation is a **separate process
   When the server closes the connection, the client socket thread returns to its connect step and
   retries once a second until the server accepts.
 
-**The exchange is `JSON-RPC` style over `TCP`**: a request names an action, and the reply that
-answers it is matched to the request by `reqId` rather than by position on the connection.
+**The exchange is `JSON-RPC` style over `TCP`**: a request names an action, and its reply is
+correlated as `Theory of operation and key concepts` describes.
 
 **The socket is loopback-only.** The client connects to `127.0.0.1` and takes only the port from its
 configuration file, so the vendor server listens on the loopback interface on port `40100`, on the
@@ -212,10 +210,11 @@ every action.
 No memory is shared across the HAL boundary: what crosses it is a serialized `JSON` document. The
 memory a caller manages is local, and consists of two `json_object` handles per exchange. The
 **request** is created by the caller, normally with `json_hal_client_get_request_header()`, which
-returns an object already carrying `module`, `version`, `action` and `reqId` and, for every action
-except `getSchema`, an empty `params` array. The **reply** is created by the client library and
-returned through the out-parameter of `json_hal_client_send_and_get_reply()`. Both are released with
-the `json-c` reference-count release, `json_object_put()`.
+returns an object already carrying the four envelope fields and, unless the action name begins with
+`getSchema`, an empty `params` array, so `getSchema` and `getSchemaResponse` get none. The **reply**
+is created by the client library and returned through the out-parameter of
+`json_hal_client_send_and_get_reply()`. Both are released with the `json-c` reference-count release,
+`json_object_put()`.
 
 #### Caller Responsibilities
 
@@ -225,8 +224,10 @@ the `json-c` reference-count release, `json_object_put()`.
   it only after a completed exchange, and assigns `NULL` when the received document does not parse,
   so a caller tests the handle rather than the return code alone. A failed exchange leaves no reply
   object to release.
-- **Copy values out of a reply before releasing it.** Values read with `json_hal_get_param()` are not
-  valid once the reply is released.
+- **Copy borrowed strings out of a reply before releasing it.** A pointer taken directly from the
+  reply with a `json-c` accessor such as `json_object_get_string()` is valid only until the reply is
+  released. `json_hal_get_param()` copies each entry into the caller's `hal_param_t`, and that copy
+  outlives the reply.
 - **Build a new request for every send.** Correlation needs a fresh `reqId` per exchange, and the
   header helper allocates one per call.
 - **Keep each request within 16384 bytes.** The server reads a request in one 16384-byte receive and
@@ -336,18 +337,21 @@ ten one-second polls, as `Initialization and Startup` describes, and event deliv
 
 **Two kinds of failure, reported differently.** A **transport failure** is a send-and-reply call
 that fails: the request may never have been processed. An **application failure** is a reply whose
-`Result.Status`, read with `json_hal_get_result_status()`, is not `Success`: the request was
-processed and refused. A caller handles the two separately.
+`Result.Status` is not `Success`: the server received the request and answered it. A caller handles
+the two separately.
 
 `Result.Status` takes one of four values from `definitions.resultStatusEnumList`, written exactly as
-shown, spaces included:
+shown, spaces included. `json_hal_get_result_status()` reports only whether the value is `Success`,
+so a caller acting on the table reads `Result.Status` from the reply itself and compares it exactly
+with these literals; `Error Handling` in [halSpecDetailed.md](halSpecDetailed.md) gives the helper's
+edge cases.
 
 | Status | Meaning | What the caller should do |
 | --- | --- | --- |
-| `Success` | The request was accepted and applied. | Proceed. For a write, success means the vendor accepted the value, not that dependent optical or registration state has settled; re-read the parameter when the settled value matters. |
-| `Failed` | The request was understood but could not be applied. | Do not retry blindly, since the same request usually fails again. Log the parameter path and the status, and report the failure upward. |
+| `Success` | The server reported that it accepted the request. | Proceed. Where the effect of a write matters, read the parameter back with `getParameters`: the token alone shows neither that the value was applied nor that dependent optical or registration state has settled. |
+| `Failed` | The server reported that it could not carry out the request. | Do not retry blindly, since the same request usually fails again. Log the parameter path and the status, and report the failure upward. After a multi-entry `setParameters`, read the parameters back with `getParameters` to learn which entries took effect before any retry. |
 | `Invalid Argument` | A parameter name, type or value was not acceptable. | Do not retry. Correct the request against the schema's `name` constraint, the parameter's declared datatype and its value constraint. |
-| `Not Supported` | The vendor does not implement this parameter or action. | Do not retry, and stop requesting it. This is a normal outcome for a path in `getParameterOptionalList`. |
+| `Not Supported` | The vendor reports the parameter or action as unimplemented, or the server library sent the token itself: for an action with no registered handler, or, when built with `JSON_SCHEMA_VALIDATION_ENABLED`, in place of a vendor reply that failed the server's schema validation after the vendor had handled the request. | Do not conclude from the token alone that the path is unsupported or that a write was not applied; after a write, read the parameter back with `getParameters` before retrying or ceasing to use the path. It is the expected answer for a path in `getParameterOptionalList` the vendor omits. |
 
 The table applies to every `result`, including the one that acknowledges `setParameters`, except
 the acknowledgement of a subscription, whose status cannot be read (`Asynchronous Notification
@@ -360,16 +364,14 @@ a write it did not apply.
 
 ### Persistence Model
 
-**A `Success` result reports that a value was applied, not that it was stored.** The contract has no
-notion of a stored value, so a caller re-applies any value it needs after a restart of either side of
-the socket.
+**A `Success` result acknowledges a write; it shows neither that the value was applied nor that it
+was stored.** The contract has no notion of a stored value, so a caller re-applies any value it needs
+after a restart of either side of the socket, and reads it back when the effect matters.
 
 **Correlation state belongs to the client process, not to the connection.** `reqId` comes from a
-process-wide counter that starts at 100 and is formatted as a zero-padded decimal of at least eight
-digits, so the first request of a fresh process carries `"00000101"`. The counter survives a
-reconnection and a client teardown, and resets only when the client process restarts, so identifiers
-repeat across runs. A server treats `reqId` as an opaque token, echoes it unchanged and answers on it
-rather than on arrival order; a caller never uses it as a durable key.
+process-wide counter that survives a reconnection and a client teardown and resets only when the
+client process restarts, so identifiers repeat across runs. A server echoes `reqId` unchanged as an
+opaque token, and a caller never uses it as a durable key.
 
 **The `RdkGponManager` component caches some reads.** It does not re-read the `TR69`, `Omci`, `Ploam` or `Gtc`
 object within 10 seconds of its last read, so a value read through the manager's `TR-181` data model
@@ -420,7 +422,10 @@ built without that flag.
 **Debugging the wire.** Both participants are processes on the loopback interface, so an exchange can
 be captured on `TCP` port `40100` without instrumenting either. Each message is self-describing and
 can be validated against the shipped schema directly, as `Quality Control` recommends. A capture
-holds every value exchanged and is kept to lab and development use.
+holds every value exchanged, so the rule above applies to it in a lab and in a debug build alike:
+capture synthetic or non-sensitive exchanges, or redact sensitive values before a capture is stored.
+A raw capture is never shared, whether attached to a defect report or uploaded as telemetry, and is
+deleted once it has been used.
 
 ### Memory and performance requirements
 
@@ -489,9 +494,8 @@ interaction links `-lccsp_common -lhal_platform -ljson_hal_client -ljson-c -lpth
 the manager binary additionally links the `RDK-B` logging and secure-wrapper libraries.
 
 **The transport library.** `json_hal_client`, and the server library a vendor builds against, come
-from `json-hal-library` at commit `86a0a300b976f8e3295064af8fb3fd1c793c9e64`, listed under
-`Source References`; every buffer, tick and backlog figure in this document is taken from that
-revision. A vendor implementing the server side uses `json_hal_server_init()`,
+from `json-hal-library` at commit `86a0a300b976f8e3295064af8fb3fd1c793c9e64`. A vendor
+implementing the server side uses `json_hal_server_init()`,
 `json_hal_server_register_action_callback()`, `json_hal_server_run()`,
 `json_hal_server_publish_event()` and `json_hal_server_terminate()`.
 
@@ -556,23 +560,12 @@ does not expose. Beyond the schema it selects, as `Variability Management` sets 
 | Datatypes in use | `string`, `int`, `unsignedInt`, `unsignedLong` | the same, plus `boolean` |
 | Vendor server process | started by the platform | started by `RdkGponManager` before its client initializes |
 
-**The five parameters the variant adds**, all on the indexed optical interface
-`Device.X_RDK_ONT.PhysicalMedia.{i}.`:
-
-| Parameter | Datatype | Access | What it is |
-| --- | --- | --- | --- |
-| `Enable` | `boolean` | Read-Write | Whether the interface is enabled |
-| `Alias` | `string`, up to 64 characters | Read-Write | Non-volatile unique key for referencing this instance |
-| `LowerLayers` | `string`, up to 1024 characters | Read-Write | Comma-separated list of lower-layer interface paths |
-| `LastChange` | `unsignedInt` | Read-Only | Seconds accumulated in the current operational state |
-| `Upstream` | `boolean` | Read-Only | Whether the interface points towards the network rather than towards end devices |
-
-`Enable`, `Alias` and `LowerLayers` take the writable surface from 8 to 11; in the default build the
-only writable parameters are the four optical signal-level thresholds and the four `VEIP`
-Ethernet-flow tag and `VLAN` identifier parameters. `Enable` and `Upstream` are the interface's only
-`boolean` parameters, so a vendor server serving the variant must handle that datatype. The
-manager's own `TR-181` code for the added paths is compiled under the same flag, so configuration,
-schema and manager code always move together.
+**The five parameters the variant adds** are on `Device.X_RDK_ONT.PhysicalMedia.{i}.`: `Enable`,
+`Alias` and `LowerLayers` are writable, `LastChange` and `Upstream` are read-only, and `Enable` and
+`Upstream` are the `boolean` parameters a vendor server serving the variant must handle.
+[halSpecDetailed.md](halSpecDetailed.md) gives each one's constraint and meaning under
+`Parameter Reference`. The manager's own `TR-181` code for the added paths is compiled under the
+same flag, so configuration, schema and manager code always move together.
 
 **The manager starts the vendor server in a `WAN_MANAGER_UNIFICATION_ENABLED` build.** Before
 initializing its client it runs `/bin/json_hal_server_gpon` if that file exists and
@@ -580,12 +573,10 @@ initializing its client it runs `/bin/json_hal_server_gpon` if that file exists 
 as the only argument. A vendor packaging a server for that build installs it under one of those two
 names and accepts that argument.
 
-**What the flag does not change.** The action vocabulary, the envelope, the eighteen entries in
-`subscribeEventSupportedList` and which two of them admit `notificationType`, the nine enumerations,
-the object segments and their instance-path forms, the port, the `moduleName` and the
-`schemaVersion` are identical in both variants. A vendor server can therefore be written once against
-the variant schema and serve both builds, provided it answers `Not Supported` for a parameter the
-deployed schema does not include.
+**What the flag does not change.** Everything else in the contract is identical in both variants,
+as `Optional Components` and `Variability Management` set out, so a vendor server can be written
+once against the variant schema and serve both builds, provided it answers `Not Supported` for a
+parameter the deployed schema does not include.
 
 ## Interface API Documentation
 
@@ -611,9 +602,12 @@ the schema, not adding an action.
 ordering on the connection, and the client library performs that match before returning the reply.
 This is what lets an unsolicited `publishEvent` share the connection with request and reply traffic.
 
-**The schema is enforceable, and both sides enforce it.** A message can be checked mechanically, as
-`Quality Control` recommends; the constraints most worth checking are the `name` patterns, which
-decide whether a path is addressable at all, and the datatype `const` on each parameter.
+**Each side validates what it receives.** The pinned transport validates no inbound message, and a
+server built with `JSON_SCHEMA_VALIDATION_ENABLED` checks only its own replies. A caller therefore
+validates a reply or event against the schema its configuration names before acting on it, and a
+vendor server validates each request before acting on it. The constraints most worth checking are
+the `name` patterns, which decide whether a path is addressable at all, and the datatype `const` on
+each parameter; [halSpecDetailed.md](halSpecDetailed.md) sets out `The validation boundary`.
 
 #### Object Lifecycles
 
@@ -622,12 +616,9 @@ confirmed connected, used and optionally terminated, as `Initialization and Star
 action opens or closes a conversation and no state is established by a first message, so a server
 treats each request as complete in itself.
 
-**Object instances belong to the vendor.** Three of the seven segments are instanced —
-`PhysicalMedia`, `Gem` and `Veip`, addressed as `Device.X_RDK_ONT.PhysicalMedia.{i}.` and so on — and
-four are singletons: `Gtc`, `Ploam`, `Omci` and `TR69`. No action creates an instance, and
-`deleteObject` is unusable, as `API Surface` records, so the instance set is whatever the vendor's
-hardware presents. A read of a singleton object's path returns its parameters; an instanced object's
-parameters are addressed per instance number.
+**Object instances belong to the vendor.** No action creates an instance of the three instanced
+segments `API Surface` lists, `PhysicalMedia`, `Gem` and `Veip`, and `deleteObject` is unsupported,
+so the instance set is whatever the vendor's hardware presents.
 
 **Subscriptions are the only client-created state on the server side.** A caller keeps its own
 record of them and re-subscribes after a reconnection, as `Asynchronous Notification Model`
@@ -635,8 +626,7 @@ describes.
 
 #### Method Sequencing
 
-**Before any request:** initialize, run, and confirm connectivity. A request issued before
-`json_hal_is_client_connected()` reports success goes into an unconnected client.
+**Before any request**, the client completes the three steps of `Initialization and Startup`.
 
 **The `getSchema` action is how a caller detects a schema mismatch.** It is not a prerequisite for anything
 else, since the client has its own schema path from its configuration, but `SchemaInfo.FilePath` in
@@ -658,14 +648,12 @@ The shipped `hal_schema/example_getSchemaResponse_msg.json` shows the case: it v
 `/etc/rdk/hal_schemas/xtm_hal_schema.json`, a directory no `GPON` configuration names and a contract
 belonging to another HAL. [halSpecDetailed.md](halSpecDetailed.md) gives the corrected exchange.
 
-**Subscribe with `subscribeEvent` before any `publishEvent` can arrive.** An event is sent only for a subscribed
-parameter among the eighteen in `Asynchronous Notification Model`, and only two of those can be named
-in a `subscribeEvent` a validating server accepts; the others are polled.
+**Subscribe with `subscribeEvent` before any `publishEvent` can arrive.** An event is sent only for
+a subscribed parameter, and `Asynchronous Notification Model` lists the two that can be subscribed.
 
-**Reads and writes are otherwise unordered.** The `result` acknowledging a `setParameters` reports
-acceptance, not the settled value, so a caller that needs the settled value reads it afterwards. A
-caller that needs one request to precede another issues both from one thread, as `Threading Model`
-requires.
+**Reads and writes are otherwise unordered.** A caller that needs one request to precede another
+issues both from one thread, as `Threading Model` requires, and confirms a write whose effect matters
+by reading it back, as `Internal Error Handling` describes.
 
 #### State-Dependent Behavior
 
@@ -684,75 +672,31 @@ lists the status values.
 
 ### Data Structures and Defines
 
-There is no C header here and therefore no C type; the equivalents are schema definitions. The
-complete per-definition inventory is in [halSpecDetailed.md](halSpecDetailed.md); the shapes below
-are the ones a caller builds and reads.
+There is no C header here and therefore no C type; the equivalents are schema definitions. A caller
+builds and reads four kinds:
 
-**The envelope.** Four required fields, three of them bound to a definition:
+- **The envelope**: the four required fields `Theory of operation and key concepts` names.
+- **Three payload shapes**, which `API Surface` assigns to actions: the `params` array of parameter
+  entries, whose required members depend on the action; the `Result` object, carrying `Status`; and
+  the `SchemaInfo` object, carrying `FilePath`.
+- **Parameter and object definitions.** A parameter definition binds a `TR-181` path in `name`, its
+  datatype in a `type` `const` and its allowed values in a `value` constraint, and the parameter is
+  writable only when `setParameterSupportedList` lists it. An object definition carries `name` alone
+  and is what a prefix read addresses. `Platform or Product Customization` lists the datatypes each
+  build uses.
+- **Nine named enumerations**: `action`, `resultStatusEnumList`, `notificationType`,
+  `statusEnumList`, `alarmEnumList`, `lockEnumList`, `redundancyStateEnumList`, `ponModeEnumList`
+  and `physicalConnectorEnumList`. `Internal Error Handling` gives the `resultStatusEnumList` values
+  and `State Diagram` the status values.
 
-| Field | Bound to | Form |
-| --- | --- | --- |
-| `module` | `moduleName` | `string`, `const` `gponhal` |
-| `version` | `schemaVersion` | `string`, `const` `0.0.1` |
-| `action` | `action` | `string`, one of the eleven members listed in `API Surface` |
-| `reqId` | declared inline | `string` matching `^[0-9]+$`; the client emits a zero-padded decimal of at least eight digits |
-
-**The payload objects.** Three payload shapes exist, selected by the action:
-
-| Payload | Carried by | Shape |
-| --- | --- | --- |
-| `params` | `getParameters`, `setParameters`, `getParametersResponse`, `subscribeEvent`, `publishEvent`, `deleteObject` | An array, at least one item, items unique. Each item is a parameter entry whose required fields vary by action. |
-| `Result` | `result` | An object with a single `Status` field, `additionalProperties: false`, `Status` required. |
-| `SchemaInfo` | `getSchemaResponse` | An object with a single `FilePath` field, `additionalProperties: false`, `FilePath` required, matching `^(.+)/([^/]+)$`. |
-
-**Required fields per `params` entry**, which differ by action:
-
-| Action | Required in each `params` entry |
-| --- | --- |
-| `getParameters` | `name` only |
-| `setParameters`, `getParametersResponse`, `publishEvent` | `name`, `type` and `value` |
-| `subscribeEvent` | `name` and `notificationType` |
-| `deleteObject` | `name` — but the action is unusable; see `API Surface` |
-
-**A leaf parameter definition**, this interface's analogue of a documented function parameter,
-carries a `description` and three properties, and most forbid others through
-`additionalProperties: false`: `name` — a `const` exact path for a parameter on a singleton object,
-or a regular expression for one on an instanced object; `type` — a `const` giving the `TR-181`
-datatype; and `value` — the constraint the value must satisfy. Subscribable parameters carry a fourth
-property, `notificationType`. An **object definition** is the same shape reduced to `name`; there are
-26 of them, and they are what a prefix-scoped read addresses. Every parameter description ends with
-an `(Access = Read-Only)` or `(Access = Read-Write)` marker, and the marker agrees exactly with
-membership of `setParameterSupportedList`, which is what a server enforces: 8 writable parameters in
-the default schema and 11 in the variant.
-
-**The nine enumerations**, each closed:
-
-| Enumeration | Members | Default |
-| --- | --- | --- |
-| `action` | The eleven members in `API Surface` | none |
-| `resultStatusEnumList` | `Success`, `Failed`, `Invalid Argument`, `Not Supported` | `Success` |
-| `notificationType` | `interval`, `onChange` | `onChange` |
-| `statusEnumList` | Operational status values, listed in `State Diagram` | none |
-| `alarmEnumList` | Alarm state values, listed in `State Diagram` | none |
-| `lockEnumList` | Administrative lock values, listed in `State Diagram` | none |
-| `redundancyStateEnumList` | Redundancy state values, listed in `State Diagram` | none |
-| `ponModeEnumList` | `GPON`, `XG-PON`, `NG-PON2`, `XGS-PON` | none |
-| `physicalConnectorEnumList` | `LC`, `ST`, `FC`, `SC`, `MT-RJ` | none |
-
-`Device.X_RDK_ONT.Ploam.RegistrationState` and `Device.X_RDK_ONT.Veip.{i}.OperationalState` declare
-their value sets inline on the parameter rather than through a named enumeration; `State Diagram`
-lists both.
-
-**The datatype vocabulary.** Parameter `type` values in use are `string`, `int`, `unsignedInt` and
-`unsignedLong`, plus `boolean` in the variant schema only. The transport library recognises a wider
-set, including `long`, `hexBinary` and `base64`, but no GPON parameter declares one, so a message
-using them names a datatype outside this contract.
+[halSpecDetailed.md](halSpecDetailed.md) carries the depth: `Transport and Protocol` for the
+envelope, payloads and per-action entry members, `Object Index` and `Parameter Reference` for every
+definition, and `Enumeration Appendix` for every enumeration's members.
 
 ### API Surface
 
-This topic is the boundary between the overview above and the protocol detail in
-[halSpecDetailed.md](halSpecDetailed.md), which carries every parameter definition, every object
-path, the enumeration appendix, worked message exchanges and the contract defects.
+The protocol detail behind this topic — every parameter and object definition, worked message
+exchanges and the contract defects — is in [halSpecDetailed.md](halSpecDetailed.md).
 
 **Where a C HAL has functions, this interface has eleven action values.** They are the complete
 callable surface, declared by `definitions.action` in both schemas in the same order:
@@ -768,25 +712,17 @@ callable surface, declared by `definitions.action` in both schemas in the same o
 | `getActiveSubscriptionsResponse` | Server | none — bare envelope |
 | `getSchemaResponse` | Server | `SchemaInfo` |
 | `publishEvent` | Server | `params` |
-| `deleteObject` | Client | `params` — **not usable; see below** |
+| `deleteObject` | Client | `params` — **unsupported; see below** |
 | `result` | Server | `Result` |
-
-**Eight actions bind a payload; three travel as the bare envelope.** The schema's eight `allOf`
-branches attach a payload requirement to `setParameters`, `getParameters`, `deleteObject`,
-`subscribeEvent`, `publishEvent`, `result`, `getSchemaResponse` and `getParametersResponse`. For
-`getSchema`, `getActiveSubscriptions` and `getActiveSubscriptionsResponse` the four envelope
-fields are the entire message. Only `publishEvent` is unsolicited.
 
 **There is no `setParametersResponse`.** A write is acknowledged by the generic `result` action
 carrying `Result.Status`, and so is a subscription. `getParameters`, `getSchema` and
 `getActiveSubscriptions` each have a matching named response.
 
-**The `deleteObject` action is not usable under either shipped schema.** Its payload definition carries an empty
-`anyOf`, which no instance can satisfy, so no schema-valid delete message exists. It is listed
-because a server must be able to parse every member of the enumeration, but it is **unsupported**: a
-caller does not attempt object deletion through this interface, and a vendor need not implement it.
-[halSpecDetailed.md](halSpecDetailed.md) records the defect, together with the identical one on
-`setParameterOptionalList`.
+**The `deleteObject` action is unsupported.** Its payload definition is an empty `anyOf`, so no
+schema-valid delete message exists under either shipped schema: a caller does not attempt object
+deletion through this interface, and a vendor need not implement it.
+[halSpecDetailed.md](halSpecDetailed.md) records the defect under `Contract Defects`.
 
 **The object tree.** Every parameter lives under `Device.X_RDK_ONT`, across seven named segments:
 
@@ -801,25 +737,15 @@ caller does not attempt object deletion through this interface, and a vendor nee
 | `TR69` | `Device.X_RDK_ONT.TR69.` | 2 / 2 | The `ACS` address and the associated tag passed from the `OMCI` domain to the `TR-069` domain |
 | **Total** | | **90 / 95** | |
 
-The three instanced segments use a regular expression for `name` that requires an instance number;
-the four singletons use an exact `const`. `RdkGponManager` uses one query prefix per segment, and its
-`TR-181` data-model description declares the same objects.
-
-**Bulk reads by object prefix, and the one trap in them.** A `getParameters` request can name an
-object path rather than a leaf, and `RdkGponManager` reads the whole tree that way, one request per
-segment. A prefix is addressable only if it matches an object definition's `name` constraint:
-
-- `Device.X_RDK_ONT.Gtc.`, `Device.X_RDK_ONT.Ploam.`, `Device.X_RDK_ONT.Omci.` and
-  `Device.X_RDK_ONT.TR69.` are exact `const` values, so a request naming one of them is valid.
-- `Device.X_RDK_ONT.PhysicalMedia.`, `Device.X_RDK_ONT.Gem.` and `Device.X_RDK_ONT.Veip.` are
-  instance-indexed patterns, so a request naming the bare prefix is **not** valid; only
-  `Device.X_RDK_ONT.PhysicalMedia.1.` and its siblings are.
-
-A vendor server that validates requests strictly rejects the bare `PhysicalMedia`, `Gem` and `Veip`
-prefix reads, as the shipped `hal_schema/example_getParameters_msg.json` demonstrates by failing
-validation; [halSpecDetailed.md](halSpecDetailed.md) gives a corrected form. A caller wanting a bulk
-read of an instanced segment addresses it per instance, and a vendor that accepts the bare prefix
-documents that it accepts an extension to the shipped contract.
+**Bulk reads address an object prefix.** A `getParameters` entry can name an object path rather than
+a leaf, and `RdkGponManager` reads the tree one request per segment. The singleton prefixes
+`Device.X_RDK_ONT.Gtc.`, `Device.X_RDK_ONT.Ploam.`, `Device.X_RDK_ONT.Omci.` and
+`Device.X_RDK_ONT.TR69.` are exact `const` names and are valid. The instanced prefixes
+`Device.X_RDK_ONT.PhysicalMedia.`, `Device.X_RDK_ONT.Gem.` and `Device.X_RDK_ONT.Veip.` require an
+instance number, so a caller addresses them per instance, as `Device.X_RDK_ONT.PhysicalMedia.1.`;
+the bare form does not validate, as the shipped `hal_schema/example_getParameters_msg.json` shows.
+[halSpecDetailed.md](halSpecDetailed.md) records the defect under `Contract Defects` and gives a
+corrected read.
 
 ### Sequence Diagram
 
@@ -858,11 +784,8 @@ sequenceDiagram
     Cli-->>Mgr: event callback with the raw message, on the client socket thread
 ```
 
-The write is answered by `result`, not by a response action named after the request, while the
-read is answered by `getParametersResponse`. The read is scoped to a singleton object prefix,
-`Device.X_RDK_ONT.Gtc.`, which is addressable for the reason `API Surface` gives. Every reply is
-matched to its request by `reqId`, which is what allows an unsolicited `publishEvent` to arrive
-between any two of these steps.
+The write is answered by `result` and the read by `getParametersResponse`. The read names the
+singleton prefix `Device.X_RDK_ONT.Gtc.`, which is addressable for the reason `API Surface` gives.
 
 ### State Diagram
 
@@ -913,11 +836,15 @@ describes.
 - [rdkcentral/gpon-manager/source/GponManager/Makefile.am](https://github.com/rdkcentral/gpon-manager/blob/main/source/GponManager/Makefile.am) — manager binary link libraries
 - [rdkcentral/gpon-manager/.github/CODEOWNERS](https://github.com/rdkcentral/gpon-manager/blob/main/.github/CODEOWNERS) — the repository's code owner
 - [rdkcentral/gpon-manager/CHANGELOG.md](https://github.com/rdkcentral/gpon-manager/blob/main/CHANGELOG.md) — release history
+- [rdkcentral/gpon-manager/LICENSE](https://github.com/rdkcentral/gpon-manager/blob/main/LICENSE) — Apache License, Version 2.0 text
+- [rdkcentral/gpon-manager/COPYING](https://github.com/rdkcentral/gpon-manager/blob/main/COPYING) — copy of the `LICENSE` text
+- [rdkcentral/gpon-manager/NOTICE](https://github.com/rdkcentral/gpon-manager/blob/main/NOTICE) — attribution notice
 - [rdkcentral/json-hal-library/json_hal_client.h](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/json_hal_client.h) — client entry points
-- [rdkcentral/json-hal-library/json_hal_client.c](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/json_hal_client.c) — reply wait budget, event dispatch, request tracking and `reqId` counter
+- [rdkcentral/json-hal-library/json_hal_client.c](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/json_hal_client.c) — reply wait budget, event dispatch, request tracking, `reqId` counter, request-header and result-status helpers
 - [rdkcentral/json-hal-library/json_hal_common.h](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/json_hal_common.h) — configuration and parameter helpers
-- [rdkcentral/json-hal-library/json_hal_common.c](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/json_hal_common.c) — configuration and schema loading
+- [rdkcentral/json-hal-library/json_hal_common.c](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/json_hal_common.c) — configuration and schema loading, parameter copy into `hal_param_t`
 - [rdkcentral/json-hal-library/json_hal_server.h](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/json_hal_server.h) — server entry points a vendor implements against
+- [rdkcentral/json-hal-library/json_hal_server.c](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/json_hal_server.c) — server dispatch, optional reply validation and `Not Supported` replies
 - [rdkcentral/json-hal-library/json-rpc-common/json_rpc_common.h](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/json-rpc-common/json_rpc_common.h) — buffer size, notification types, datatypes and logging macros
 - [rdkcentral/json-hal-library/tcp_client.h](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/tcp_client.h) — loopback server address and receive-loop period
 - [rdkcentral/json-hal-library/tcp_client.c](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/tcp_client.c) — client connection, send and receive loop
