@@ -9,7 +9,7 @@ The `GPON` HAL differs structurally from most RDK-B HALs: it is **not** a C head
 linked across the HAL boundary. The contract is a `JSON` Schema, and the two participants are
 separate processes exchanging messages over a `TCP` socket. That is why the workspace carries no
 `rdkb-halif-gpon` repository — the interface contract lives here, beside the manager that speaks it
-[superproject `README.md:27`]. Everything else in this repository is the manager middleware around
+[superproject `README.md`]. Everything else in this repository is the manager middleware around
 that contract.
 
 ## Documentation
@@ -34,34 +34,34 @@ specification.
 **A note on sourcing.** Every factual claim on this page about a path, a port, a compile flag or a
 component boundary names the file that establishes it, and where this repository establishes nothing
 the text says so rather than filling the gap. `GPON` is not available on the `HUB6` or `XER10`
-reference platforms [superproject `README.md:102-103`], so nothing here is presented as observed
-runtime behaviour.
+reference platforms [superproject `README.md`], so nothing here is presented as observed runtime
+behaviour.
 
 ## Architecture
 
 ```mermaid
 graph LR
     subgraph "RDK-B middleware"
-        RDKBStack["RDK-B Stack"]
-        GponManager["GponManager (RdkGponManager)"]
+        RdkGponManager["RdkGponManager"]
+        JsonHalClient["json_hal_client"]
     end
     JSONHALSocket["JSON HAL socket (TCP 127.0.0.1:40100)"]
     subgraph "Vendor software"
-        VendorServer["Vendor JSON HAL Server (json_hal_server_gpon)"]
+        VendorServer["Vendor JSON HAL Server"]
     end
-    RDKBStack <--> GponManager
-    GponManager <--> JSONHALSocket
+    RdkGponManager <--> JsonHalClient
+    JsonHalClient <--> JSONHALSocket
     JSONHALSocket <--> VendorServer
 ```
 
 [`docs/pages/halSpec.md`](docs/pages/halSpec.md) is the authority for this architecture; the chain is
-reproduced here only so its shape is visible at a glance. The manager is the **client** of the
-interface and the vendor supplies the **server** [`source/TR-181/middle_layer_src/gponmgr_dml_hal.c`].
-No separate middleware service sits between the RDK-B stack and this interface — the superproject
-inventory records `GPON` as having no service dependency [superproject `README.md:102`] — because
-this manager is itself the owning service. The loopback address is fixed by the transport, which
-defines `SERVER_HOST` as `127.0.0.1`
-[[`tcp_client.h:33`](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/tcp_client.h)].
+reproduced here only so its shape is visible at a glance. `RdkGponManager` is the **client** of the
+interface, through the `json_hal_client` library, and the vendor supplies the **server**
+[`source/TR-181/middle_layer_src/gponmgr_dml_hal.c`]. No separate middleware service sits between
+the rest of RDK-B and this interface — the superproject inventory records `GPON` as having no
+service dependency [superproject `README.md`] — because `RdkGponManager` is itself the owning
+service. The loopback address is fixed by the transport, which defines `SERVER_HOST` as `127.0.0.1`
+[[`tcp_client.h`](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/tcp_client.h)].
 
 ## JSON HAL contract
 
@@ -76,14 +76,15 @@ it.
 seven segments — `PhysicalMedia` (36 parameters), `Gem` (18), `Veip` (13), `Ploam` (10), `Gtc` (8),
 `Omci` (3) and `TR69` (2), for a total of 90 in `hal_schema/gpon_hal_schema.json`. The segment names
 are corroborated by the `GPON_QUERY_*` definitions the manager uses to address them
-[`source/TR-181/middle_layer_src/gponmgr_dml_hal.c:64-70`], and
+[`source/TR-181/middle_layer_src/gponmgr_dml_hal.c`], and
 [`docs/pages/halSpecDetailed.md`](docs/pages/halSpecDetailed.md) documents each parameter within them.
 
 **Actions.** The `action` enumeration carries eleven members [`definitions.action`], of which eight
 bind a payload. `docs/pages/halSpec.md` names them all and records which are unsupported under the
 shipped schema.
 
-**Shipped schema variants.** Two schemas are shipped, and a build loads exactly one of them:
+**Shipped schema variants.** Two schemas are shipped, both consumed by `RdkGponManager` and by no
+other component, and a build loads exactly one of them:
 
 | Schema | Parameter definitions | Loaded when |
 | --- | --- | --- |
@@ -101,7 +102,7 @@ grows from 8 members to 11, adding `PhysicalMedia.{i}.Enable`, `PhysicalMedia.{i
 place and states the writable surface for both files.
 
 **Transport.** The interface is carried by the `json-hal-library` client and server, which the middle
-layer links as `-ljson_hal_client` [`source/TR-181/middle_layer_src/Makefile.am:39`]. That library is
+layer links as `-ljson_hal_client` [`source/TR-181/middle_layer_src/Makefile.am`]. That library is
 the authority for the message envelope and the client semantics, which neither this page nor the HAL
 specification restates:
 [rdkcentral/json-hal-library@`86a0a300`](https://github.com/rdkcentral/json-hal-library/tree/86a0a300b976f8e3295064af8fb3fd1c793c9e64).
@@ -115,8 +116,8 @@ it, and a reader told only about the flag cannot tell which schema their build s
 `#if defined(WAN_MANAGER_UNIFICATION_ENABLED)` sets `GPON_MANAGER_CONF_FILE` to
 `/etc/rdk/conf/gpon_manager_wan_unify_conf.json`, and otherwise to
 `/etc/rdk/conf/gpon_manager_conf.json`
-[`source/TR-181/middle_layer_src/gponmgr_dml_hal.c:57-61`]. That path is what the manager passes to
-`json_hal_client_init` [same file, `:111`].
+[`source/TR-181/middle_layer_src/gponmgr_dml_hal.c`]. That path is what `RdkGponManager` passes to
+`json_hal_client_init`.
 
 **Step 2 — the selected configuration file names the schema and the port.**
 [`config/gpon_manager_conf.json`](config/gpon_manager_conf.json) names
@@ -149,13 +150,13 @@ initialises Automake and Libtool, and generates the makefiles for `source/` and 
 the root [`Makefile.am`](Makefile.am) declares `SUBDIRS = source`.
 
 **Build options.** One is exposed: `--enable-notify` adds `-DENABLE_SD_NOTIFY` and links `-lsystemd`
-for systemd readiness notification [`configure.ac:63-73`]. A `GITVERSION` macro records
-`git describe --tags --always --dirty` into the substituted `GIT_VERSION` [`configure.ac:50-53`].
+for systemd readiness notification [`configure.ac`]. A `GITVERSION` macro records
+`git describe --tags --always --dirty` into the substituted `GIT_VERSION` [`configure.ac`].
 
 **Dependencies.** `configure.ac` checks only for standard C headers, so the makefiles rather than the
 configure script declare the component's libraries: the middle layer links `-lccsp_common`,
 `-lhal_platform`, `-ljson_hal_client`, `-ljson-c`, `-lpthread` and `-lsyscfg`
-[`source/TR-181/middle_layer_src/Makefile.am:39`]. No other build recipe or toolchain is specified by
+[`source/TR-181/middle_layer_src/Makefile.am`]. No other build recipe or toolchain is specified by
 this repository.
 
 **Version identities.** The `AC_INIT` string in `configure.ac` is the Autotools package identifier
