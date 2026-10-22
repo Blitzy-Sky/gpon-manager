@@ -584,9 +584,6 @@ delete message is published. Every `JSON` block below validates against the sche
 it names. The `reqId` values follow the form the client emits (`Transport and Protocol`); a real
 exchange carries whatever value the counter has reached.
 
-The two diagrams are fenced `mermaid` blocks: they render on GitHub, and the generated `Doxygen` site
-shows their source text.
-
 ```mermaid
 sequenceDiagram
     participant Mgr as RdkGponManager
@@ -596,8 +593,8 @@ sequenceDiagram
     Mgr->>Cli: json_hal_add_param(request, GET_REQUEST_MESSAGE, &param)
     Mgr->>Cli: json_hal_client_send_and_get_reply(request, &reply)
     Cli->>Srv: getParameters, reqId 00000101, params[Device.X_RDK_ONT.Gtc.]
-    Srv->>Cli: getParametersResponse, reqId 00000101, params[...]
-    Cli->>Mgr: reply, correlated by reqId
+    Srv-->>Cli: getParametersResponse, reqId 00000101, params[...]
+    Cli-->>Mgr: reply, correlated by reqId
     Mgr->>Cli: json_hal_get_total_param_count(reply)
     Mgr->>Cli: json_hal_get_param(reply, i, GET_RESPONSE_MESSAGE, &param)
     Mgr->>Cli: json_object_put(request), json_object_put(reply)
@@ -787,11 +784,11 @@ sequenceDiagram
     participant Srv as Vendor JSON HAL Server
     Mgr->>Cli: json_hal_client_subscribe_event(cb, "Device.X_RDK_ONT.PhysicalMedia.1.Status", "onChange")
     Cli->>Srv: subscribeEvent, reqId 00000104, params[name + notificationType]
-    Srv->>Cli: result, reqId 00000104
+    Srv-->>Cli: result, reqId 00000104
     note over Cli: the helper discards this reply without reading Result.Status
-    Cli->>Cli: register callback in the event tracking list
-    Srv-->>Cli: publishEvent, unsolicited, params[name + type + value]
-    Cli-->>Mgr: callback(event_buf, len) on the library socket thread
+    note over Cli: registers the callback in the event tracking list
+    Srv->>Cli: publishEvent, unsolicited, params[name + type + value]
+    Cli->>Mgr: callback(event_buf, len) on the library socket thread
 ```
 
 **Request:** `RdkGponManager` to the vendor JSON HAL server, valid against both files.

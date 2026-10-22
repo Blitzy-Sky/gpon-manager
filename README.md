@@ -76,10 +76,10 @@ authority for the message envelope and the client semantics:
 **Shipped Schema Variants:** Two schemas are shipped, both consumed by `RdkGponManager` and by no
 other component, and a build loads exactly one of them:
 
-| Schema | Parameter definitions | `WAN_MANAGER_UNIFICATION_ENABLED` | Configuration file the manager reads | Schema path that configuration names | Server port |
-| --- | --- | --- | --- | --- | --- |
-| [`hal_schema/gpon_hal_schema.json`](hal_schema/gpon_hal_schema.json) | 90 | Not defined | `/etc/rdk/conf/gpon_manager_conf.json`, shipped as [`config/gpon_manager_conf.json`](config/gpon_manager_conf.json) | `/etc/rdk/schemas/gpon_hal_schema.json` | `40100` |
-| [`hal_schema/gpon_wan_unify_hal_schema.json`](hal_schema/gpon_wan_unify_hal_schema.json) | 95 | Defined | `/etc/rdk/conf/gpon_manager_wan_unify_conf.json`, shipped as [`config/gpon_manager_wan_unify_conf.json`](config/gpon_manager_wan_unify_conf.json) | `/etc/rdk/schemas/gpon_wan_unify_hal_schema.json` | `40100` |
+| Schema | Parameter definitions | Loaded when |
+| --- | --- | --- |
+| [`gpon_hal_schema.json`](hal_schema/gpon_hal_schema.json) | 90 | `WAN_MANAGER_UNIFICATION_ENABLED` is not defined |
+| [`gpon_wan_unify_hal_schema.json`](hal_schema/gpon_wan_unify_hal_schema.json) | 95 | `WAN_MANAGER_UNIFICATION_ENABLED` is defined |
 
 Selection takes two steps: the flag sets `GPON_MANAGER_CONF_FILE`, the configuration file
 `RdkGponManager` passes to `json_hal_client_init`

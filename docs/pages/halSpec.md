@@ -79,10 +79,6 @@ the seven segments with their parameter counts.
 `GPON` is not available on the `HUB6` or `XER10` reference platforms, so the behaviour stated here
 has not been observed on a running HAL.
 
-Diagrams are fenced `mermaid` blocks. They render on GitHub; the generated documentation site shows
-their source text, keeps a fixed-width navigation pane that leaves little room on a narrow viewport,
-and scrolls wide tables horizontally, so GitHub is the better surface for reading this page.
-
 ## Optional Components
 
 **Schema Variant:** The `wan_unify` schema variant is the only optional component.
@@ -763,21 +759,21 @@ sequenceDiagram
     Mgr->>Cli: json_hal_add_param(request, SET_REQUEST_MESSAGE, &param)
     Mgr->>Cli: json_hal_client_send_and_get_reply(request, &reply)
     Cli->>Srv: setParameters, params PhysicalMedia.1.RxPower.SignalLevelLowerThreshold
-    Srv->>Cli: result with matching reqId
-    Cli->>Mgr: reply
+    Srv-->>Cli: result with matching reqId
+    Cli-->>Mgr: reply
     Mgr->>Cli: json_hal_get_result_status(reply, &status)
     Mgr->>Cli: json_hal_client_get_request_header("getParameters")
     Mgr->>Cli: json_hal_client_send_and_get_reply(request, &reply)
     Cli->>Srv: getParameters, params Device.X_RDK_ONT.Gtc.
-    Srv->>Cli: getParametersResponse with matching reqId
-    Cli->>Mgr: reply
+    Srv-->>Cli: getParametersResponse with matching reqId
+    Cli-->>Mgr: reply
     Mgr->>Cli: json_hal_get_total_param_count(reply)
     Mgr->>Cli: json_hal_get_param(reply, i, GET_RESPONSE_MESSAGE, &param)
     Mgr->>Cli: json_hal_client_subscribe_event(callback, "Device.X_RDK_ONT.PhysicalMedia.1.Status", "onChange")
     Cli->>Srv: subscribeEvent, params name and notificationType
-    Srv->>Cli: result with matching reqId
-    Srv-->>Cli: publishEvent, params name, type and value
-    Cli-->>Mgr: event callback with the raw message, on the client socket thread
+    Srv-->>Cli: result with matching reqId
+    Srv->>Cli: publishEvent, params name, type and value
+    Cli->>Mgr: event callback with the raw message, on the client socket thread
 ```
 
 The write is answered by `result` and the read by `getParametersResponse`. The read names the
@@ -802,9 +798,7 @@ Every value above is readable with `getParameters`. All but `RedundancyState` ca
 to, as `Asynchronous Notification Model` sets out.
 
 **Registration States:** The values `O1` to `O9` are the `ONU` activation state names of
-`ITU-T G.984.3`. The schema declares the nine values a caller may read and nothing about which may
-follow which, so a caller does not import the recommendation's activation sequence as part of this
-contract, and a test does not assert one against it.
+`ITU-T G.984.3`.
 
 **Caller Practice:** It reads the current value rather than tracking transitions:
 `Device.X_RDK_ONT.Ploam.RegistrationState` for registration, `PhysicalMedia.{i}.Status` for the
