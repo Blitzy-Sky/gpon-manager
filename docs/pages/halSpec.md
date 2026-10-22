@@ -1,0 +1,845 @@
+# GPON HAL Documentation
+
+## Version History
+
+| Date | Comment | Version |
+| --- | --- | --- |
+| 2026-08-24 | Initial release. Specifies the GPON `JSON` HAL contract carried by `hal_schema/gpon_hal_schema.json` and by its build-selected variant `hal_schema/gpon_wan_unify_hal_schema.json`, recorded as an `Unreleased` entry in [`CHANGELOG.md`](https://github.com/rdkcentral/gpon-manager/blob/main/CHANGELOG.md). | 1.0.0 |
+
+## Acronyms
+
+- `ACS` \- Auto Configuration Server, the remote management server a `TR-069` agent contacts
+- `FEC` \- Forward Error Correction
+- `GEM` \- `GPON` Encapsulation Method, the frame format carrying user traffic over the `PON`
+- `GPON` \- Gigabit-capable Passive Optical Network
+- `GTC` \- `GPON` Transmission Convergence, the framing sub-layer between the `PON` and `GEM`
+- `HAL` \- Hardware Abstraction Layer
+- `IPC` \- Inter-Process Communication
+- `ITU-T` \- International Telecommunication Union Telecommunication Standardization Sector
+- `JSON` \- JavaScript Object Notation
+- `JSON-RPC` \- The remote procedure call convention carried over `JSON`, used by this HAL's transport
+- `MIC` \- Message Integrity Check, the integrity field on an `OMCI` message
+- `OMCI` \- `ONT` Management and Control Interface
+- `ONT` \- Optical Network Termination, the subscriber-side endpoint this interface models
+- `ONU` \- Optical Network Unit, the term the `ITU-T` recommendations use for the same endpoint
+- `PLOAM` \- Physical Layer Operations, Administration and Maintenance
+- `PON` \- Passive Optical Network
+- `RDK-B` \- Reference Design Kit for Broadband Devices
+- `TCP` \- Transmission Control Protocol
+- `TR-069` \- Broadband Forum Technical Report 069, the CPE WAN management protocol
+- `TR-181` \- Broadband Forum Technical Report 181, which defines the `Device:2` root data model
+- `VEIP` \- Virtual Ethernet Interface Point, the `OMCI` managed entity bridging `PON` to Ethernet
+- `VLAN` \- Virtual Local Area Network
+
+## Description
+
+The diagram below describes a high-level software architecture of the GPON HAL module stack.
+
+```mermaid
+flowchart TD
+    Mgr["RdkGponManager"] <--> Cli["json_hal_client"]
+    Cli <--> Socket["JSON HAL socket (TCP port 40100)"]
+    Socket <--> Srv["Vendor JSON HAL Server"]
+```
+
+The GPON HAL is the interface between `RdkGponManager` and a vendor's `GPON` implementation. It
+differs from most HALs in `RDK-B` in one structural respect: **it is not a C header, and no library
+is linked across the HAL boundary**. The contract is a `JSON` Schema, the two participants are
+separate processes, and they exchange messages over a loopback `TCP` socket. The contract lives in
+this repository, beside the manager that speaks it, and the per-parameter detail that inline
+documentation carries for a C HAL is in [halSpecDetailed.md](halSpecDetailed.md).
+
+**Schema Consumer:** Each schema is consumed by `RdkGponManager` and by no other component. The
+repository ships two schemas, `hal_schema/gpon_hal_schema.json` and
+`hal_schema/gpon_wan_unify_hal_schema.json`, and a build loads exactly one of them:
+`WAN_MANAGER_UNIFICATION_ENABLED` selects the client configuration file, and that file names the
+schema, as `Variability Management` sets out. `RdkGponManager` is the **client** of the interface,
+through the `json_hal_client` library, and the vendor supplies the **server**. The manager is also
+the owning middleware service, so no other `RDK-B` component sits between it and the HAL. The rest
+of `RDK-B` sees `GPON` state as a consumer of the manager's `TR-181` data model under
+`Device.X_RDK_ONT`, which the manager translates into `JSON` HAL requests.
+
+**Vendor Extension:** The object tree is a vendor extension, not a Broadband Forum model. Every
+parameter lives under `Device.X_RDK_ONT`, and the `X_` prefix marks an extension to the `TR-181`
+`Device:2` root data model rather than a branch the Broadband Forum defines. The interface-object
+conventions the schema borrows are those of the Broadband Forum `Device:2` root data model at
+release `2.21`, published as
+[`TR-181 Device:2, release 2.21`](https://cwmp-data-models.broadband-forum.org/tr-181-2-21-0-cwmp.html).
+Parameter semantics come from the optical standards the schema descriptions cite — `ITU-T G.988` for
+the `OMCI` managed entities and their counters, and `ITU-T G.9807` for three `GTC` error counters —
+and from the manager's `TR-181` data-model description, `config/RdkGponManager.xml`.
+
+The interface covers the optical transceiver and its alarms (`PhysicalMedia`), `GEM` port and
+Ethernet flow mapping including `VLAN` tag handling (`Gem`), the `VEIP` interface and its Ethernet
+flows (`Veip`), the `PLOAM` registration state and its timers (`Ploam`), `GTC` framing and `FEC`
+counters (`Gtc`), `OMCI` message and `MIC` error counts (`Omci`), and the `ACS` address and
+associated tag handed from the `OMCI` domain to the `TR-069` domain (`TR69`). `API Surface` lists
+the seven segments with their parameter counts.
+
+`GPON` is not available on the `HUB6` or `XER10` reference platforms, so the behaviour stated here
+has not been observed on a running HAL.
+
+## Optional Components
+
+**Schema Variant:** The `wan_unify` schema variant is the only optional component.
+`Platform or Product Customization` sets out what it adds — five `PhysicalMedia` parameters, three
+of them writable — and `Variability Management` how a build selects it.
+
+**Mandatory Surface:** No transport, action or notification type is optional. Both schemas declare
+the same eleven actions, the same nine enumerations and the same eighteen entries in
+`subscribeEventSupportedList`. The one list the schemas mark as optional is
+`getParameterOptionalList`, which holds 24 read paths — the 21 `Gem` Ethernet-flow entries and the
+three `TR69` entries. A vendor that does not implement one of them answers `Not Supported`, as
+`Internal Error Handling` describes. The companion `setParameterOptionalList` is an empty `anyOf` in
+both schemas, a defect in the shipped contract rather than an option;
+[halSpecDetailed.md](halSpecDetailed.md) records it under `Contract Defects`.
+
+## Component Runtime Execution Requirements
+
+The client side of this interface is the `json_hal_client` library linked into `RdkGponManager`; the
+server side is a separate vendor process. The requirements below apply to the caller of the client
+library and, where stated, to the vendor server.
+
+### Initialization and Startup
+
+**Start-Up Sequence:** Bring-up takes three steps, in this order, and the third is not optional.
+`RdkGponManager`'s bring-up is the reference sequence:
+
+1. `json_hal_client_init()` with the path of the client configuration file, from which the client
+   reads the server port and the schema path.
+2. `json_hal_client_run()`, which starts the client socket thread.
+3. Poll `json_hal_is_client_connected()` until it reports a connection. The manager polls up to ten
+   times, one second apart, and fails its initialization if no connection is established in that
+   window.
+
+Step 3 is required because the socket connects asynchronously on the thread step 2 starts: a request
+issued immediately after step 2 may go into an unconnected client.
+
+**Schema Dependency:** The schema file is a runtime dependency of the client. Step 1 opens the
+schema the configuration names and takes `definitions.moduleName.const` and
+`definitions.schemaVersion.const` from it, and every request header the client builds carries those
+values as `module` and `version`. Initialization fails if the schema file is missing or unreadable.
+Both GPON schemas declare `module` `gponhal` and `version` `0.0.1`, so a variant mismatch between
+manager and vendor is invisible in the envelope and surfaces later as an unrecognised parameter
+name.
+
+**First Message:** No initialization message is sent. The first message a vendor server receives is
+an ordinary request.
+
+**Client Entry Points:** All are declared by `json-hal-library` (see `Build Requirements`):
+
+- `json_hal_client_init()` — read the configuration and the schema, and prepare the client
+- `json_hal_client_run()` — start the client socket thread
+- `json_hal_is_client_connected()` — test whether the socket is connected
+- `json_hal_client_get_request_header()` — build an envelope for a named action
+- `json_hal_add_param()` — append a parameter entry to a request's `params` array
+- `json_hal_client_send_and_get_reply()` — send and wait for the correlated reply
+- `json_hal_client_send_and_get_reply_with_timeout()` — the same, with a caller-supplied wait
+- `json_hal_client_subscribe_event()` — register a callback and subscribe one event
+- `json_hal_get_result_status()` — test whether a reply's `Result.Status` is `Success`
+- `json_hal_get_total_param_count()` and `json_hal_get_param()` — walk a reply's `params` array
+- `json_hal_client_terminate()` — tear the client down
+
+`RdkGponManager` never calls `json_hal_client_terminate()`, so its socket lives as long as the
+process.
+
+**Vendor Obligation:** The server listens before, or shortly after, the client starts, and accepts a
+reconnection without operator intervention. A server that is not accepting connections within the
+client's ten-second window causes `RdkGponManager` initialization to fail.
+
+### Threading Model
+
+**Socket Thread:** The client library owns the socket thread. `json_hal_client_run()` starts a
+dedicated thread that owns the socket and runs the receive loop; a caller's own thread never touches
+the socket.
+
+**Event Callbacks:** They run on that thread, with the transport's subscription lock held. The
+callback registered through `json_hal_client_subscribe_event()` receives the raw event message and
+its length, and is invoked while the client holds its non-recursive subscription lock. Four rules
+follow for every callback:
+
+- **Synchronous Calls:** Do not make a synchronous HAL call from a callback. Only the receive thread
+  completes or expires a pending request, and the callback is occupying it, so the call deadlocks
+  rather than timing out. Queue the work to a caller-owned thread.
+- **Subscription Calls:** Do not subscribe, re-subscribe or terminate the client from a callback.
+  Each takes the subscription lock the dispatch already holds, and deadlocks.
+- **Message Lifetime:** Copy what the callback needs before it returns. The message buffer belongs
+  to the event's `JSON` object, which is released as soon as the callback returns.
+- **Callback Duration:** Return promptly. While a callback runs, no reply is delivered, no request
+  timeout advances and no other event is dispatched.
+
+**Request Serialization:** Issue HAL requests from one thread, or serialise them behind a lock the
+caller owns. The client gives each request its own tracking record and condition variable, so it
+does not queue concurrent callers, and it appends to its pending-request list without holding the
+lock the receive thread takes while it traverses that list. Several parameters in one `params`
+array, within the request bound in `Memory Model`, cost one exchange; batching is the way to reduce
+round trips. `RdkGponManager` reaches the HAL from both its link state machine thread and its
+`TR-181` handler path, and a new caller should not take that arrangement as a model of safe
+concurrent use.
+
+**Vendor Obligation:** The server serves a single long-lived client connection carrying sequential
+requests, stamps every reply with the `reqId` of the request it answers, and does not require a
+caller to hold more than one request open at a time.
+
+### Process Model
+
+**Process Separation:** The interface spans two processes across a socket, not a library linked into
+one. A C HAL is a shared object loaded into the calling process; here the vendor implementation is a
+**separate process** reached over `TCP`, so:
+
+- The two sides start, stop and fail independently, and either may be restarted under the other.
+- A HAL call is an `IPC` round trip that can fail for transport reasons unrelated to the parameter.
+  Every call site handles a transport failure separately from a `Failed` result status.
+- Loss of the connection is an ordinary state, observable through `json_hal_is_client_connected()`.
+  When the server closes the connection, the client socket thread returns to its connect step and
+  retries once a second until the server accepts.
+
+**Message Exchange:** The exchange is `JSON-RPC` style over `TCP`: a request names an action, and
+its reply is correlated as `Theory of operation and key concepts` describes.
+
+**Socket Address:** The socket is loopback-only. The client connects to `127.0.0.1` and takes only
+the port from its configuration file, so the vendor server listens on the loopback interface on port
+`40100`, on the same device as the manager.
+
+**Shared Port:** Both sides take the port from the same configuration file, so they agree on it
+without a discovery step. The server's listen backlog is 32 connections. `API Surface` gives the
+direction of every action.
+
+### Memory Model
+
+No memory is shared across the HAL boundary; only serialized `JSON` documents cross it. Per exchange
+the caller holds a request and a reply `json_object`, and releases both with `json_object_put()`.
+
+#### Caller Responsibilities
+
+- **Request Release:** Release the request on every path. The client library never takes ownership
+  of it, whether the exchange succeeds or fails.
+- **Reply Handle:** Initialise the reply handle to `NULL`, and release it only when it is set. The
+  library assigns it only after a completed exchange, and assigns `NULL` when the received document
+  does not parse, so a caller tests the handle rather than the return code alone. A failed exchange
+  leaves no reply object to release.
+- **Borrowed Strings:** Copy borrowed strings out of a reply before releasing it. A pointer taken
+  directly from the reply with a `json-c` accessor such as `json_object_get_string()` is valid only
+  until the reply is released. `json_hal_get_param()` copies each entry into the caller's
+  `hal_param_t`, and that copy outlives the reply.
+- **Fresh Requests:** Build a new request for every send. Correlation needs a fresh `reqId` per
+  exchange, and `json_hal_client_get_request_header()` allocates one per call.
+- **Request Size:** Keep each request within 16384 bytes. The server reads a request in one
+  16384-byte receive and discards, without a reply, a request that does not arrive whole, and the
+  client's send loop can return before the whole request is written. A caller with a large batch
+  splits it into several requests. Replies carry no such bound: the client reassembles a long reply
+  from successive reads.
+- **String Termination:** Zero-terminate every string placed in a request, since the transport
+  serializes parameter fields as C strings.
+
+#### Module Responsibilities
+
+- The client library owns its receive buffers and its request tracking, reassembles a reply that
+  spans several reads, and hands the caller a reply handle only for a complete parsed document;
+  ownership of that handle then passes to the caller. The library never takes ownership of the
+  request.
+- The vendor server owns everything on its side of the socket, assumes nothing about what a
+  disconnected client released, and serves a fresh connection from a restarted manager.
+- Process separation isolates allocations, not data, so a caller treats every received name and
+  value as untrusted input. `Contract Defects` in [halSpecDetailed.md](halSpecDetailed.md) records
+  the framing and fixed-buffer limits.
+
+### Power Management Requirements
+
+**Power Control:** This interface carries no power-management function. No action or parameter in
+either schema requests a power state or a power transition: the vocabulary reads and writes optical,
+registration and counter parameters only. The writable `PhysicalMedia` signal-level thresholds set
+optical alarm thresholds, as the `ITU-T G.988` clauses cited in their descriptions define them, and
+not transmit power.
+
+### Asynchronous Notification Model
+
+**Subscription Flow:** One subscription mechanism serves two message flows. A caller subscribes with
+`subscribeEvent`, which the server acknowledges with `result`; the server then sends `publishEvent`
+unsolicited whenever the subscribed parameter meets the notification condition. The vocabulary has
+no unsubscribe action. Callbacks run as `Threading Model` describes and follow its four rules.
+
+**Required Fields:** The required fields differ between the two messages. A `subscribeEvent`
+parameter entry carries `name` and `notificationType` and no value. A `publishEvent` parameter entry
+carries `name`, `type` and `value`, so a receiver can interpret the value without looking the
+parameter up.
+
+**Notification Types:** The `notificationType` value is `interval` or `onChange`, with `onChange` as
+the default. The transport also defines `onChangeSync` and `onChangeSyncTimeout` behind its
+`JSON_BLOCKING_SUBSCRIBE_EVENT` compile guard. Neither belongs to this contract: a subscription
+requesting one is not a valid message on this interface, and a GPON vendor server need not support
+them. `RdkGponManager` subscribes with `onChange`.
+
+**Subscribable Parameters:** Eighteen parameters can be published, and only two of them can be
+subscribed to. `subscribeEvent` and `publishEvent` bind their `params` items to the eighteen entries
+of `subscribeEventSupportedList`, identical in both variants. A `subscribeEvent` entry also requires
+`notificationType`, and only `ontPhysicalMediaStatus` and `ontVeipAdministrativeState` declare that
+property, so a validating server rejects a subscription naming any of the other sixteen while
+accepting a `publishEvent` for all eighteen.
+
+| Group | Parameters | Valid in `subscribeEvent` |
+| --- | --- | --- |
+| Optical status | `Device.X_RDK_ONT.PhysicalMedia.{i}.Status` | **Yes** |
+| Optical alarms (14) | `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.` `RDI`, `PEE`, `LOS`, `LOF`, `DACT`, `DIS`, `MIS`, `MEM`, `SUF`, `SD`, `SF`, `LCDG`, `TF`, `ROGUE` | No — the definitions declare no `notificationType` property |
+| Registration | `Device.X_RDK_ONT.Ploam.RegistrationState` | No — same reason |
+| `VEIP` administrative state | `Device.X_RDK_ONT.Veip.{i}.AdministrativeState` | **Yes** |
+| `VEIP` operational state | `Device.X_RDK_ONT.Veip.{i}.OperationalState` | No — same reason |
+
+`Ploam` is a singleton, so its path has no instance number; `PhysicalMedia` and `Veip` are indexed,
+and the alarm leaf names are upper case exactly as written above.
+
+**Polled Parameters:** The sixteen that cannot be subscribed to are polled. A caller reads them with
+`getParameters`, and does not treat a lack of events for them as a sign that their value is
+unchanged. `RdkGponManager` itself issues three subscriptions that a validating server rejects;
+[halSpecDetailed.md](halSpecDetailed.md) records them with the defect.
+
+**Reading State:** Current state is read, not awaited. A caller that needs a current value reads it
+with `getParameters` rather than waiting for an event, and re-subscribes after a reconnection. The
+client keeps its subscription list across a dropped connection and appends a repeated subscription
+rather than replacing the first, so a callback registered twice runs twice per event: a caller that
+re-subscribes uses an idempotent handler, or terminates and re-initializes the client first.
+
+**Subscription Status:** A subscription's status cannot be read. `json_hal_client_subscribe_event()`
+releases the `result` without inspecting `Result.Status`, so a subscription refused with `Failed`,
+`Invalid Argument` or `Not Supported` returns to the caller exactly as an accepted one does. The
+arrival of a `publishEvent` is the only evidence that a subscription is live.
+
+**Active Subscriptions:** The `getActiveSubscriptions` action cannot enumerate subscriptions.
+Neither it nor `getActiveSubscriptionsResponse` binds a payload, so the response is the bare
+four-field envelope, and the transport provides no helper for either action. A caller keeps its own
+record of what it subscribed to, as `RdkGponManager` does by subscribing from a fixed list at
+startup, and treats any extra content in a response as a vendor extension.
+
+**Vendor Obligation:** The server acknowledges every `subscribeEvent` with a `result`, publishes
+only the parameters in the table above with all three required fields populated, and does not
+require a `getActiveSubscriptions` exchange to establish or maintain a subscription.
+
+### Blocking calls
+
+`json_hal_client_send_and_get_reply()` and `json_hal_client_send_and_get_reply_with_timeout()` are
+synchronous: each blocks the calling thread until the matching reply arrives or the wait expires, so
+HAL requests are not issued from a thread with latency obligations of its own. The untimed form
+waits about 10 seconds and the timed form about 10 to 120 seconds. These are nominal budgets, not
+hard deadlines, so a caller that needs a deadline enforces its own. `RdkGponManager` uses the
+untimed form for every request. Connection set-up blocks for up to ten one-second polls, as
+`Initialization and Startup` describes. `publishEvent` delivery is asynchronous and no caller blocks
+waiting for it; an event callback never makes a synchronous call, as `Threading Model` sets out.
+`Blocking and timeouts` in [halSpecDetailed.md](halSpecDetailed.md) gives the budget arithmetic.
+
+### Internal Error Handling
+
+**Failure Classes:** Two kinds of failure are reported differently. A **transport failure** is a
+send-and-reply call that fails: the request may never have been processed. An **application
+failure** is a reply whose `Result.Status` is not `Success`: the server received the request and
+answered it. A caller handles the two separately.
+
+`Result.Status` takes one of four values from `definitions.resultStatusEnumList`, written exactly as
+shown, spaces included. `json_hal_get_result_status()` reports only whether the value is `Success`,
+so a caller acting on the table reads `Result.Status` from the reply itself and compares it exactly
+with these literals; `Error Handling` in [halSpecDetailed.md](halSpecDetailed.md) gives the helper's
+edge cases.
+
+| Status | Meaning | What the caller should do |
+| --- | --- | --- |
+| `Success` | The server reported that it accepted the request. | Proceed. Where the effect of a write matters, read the parameter back with `getParameters`: the token alone shows neither that the value was applied nor that dependent optical or registration state has settled. |
+| `Failed` | The server reported that it could not carry out the request. | Do not retry blindly, since the same request usually fails again. Log the parameter path and the status, and report the failure upward. After a multi-entry `setParameters`, read the parameters back with `getParameters` to learn which entries took effect before any retry. |
+| `Invalid Argument` | A parameter name, type or value was not acceptable. | Do not retry. Correct the request against the schema's `name` constraint, the parameter's declared datatype and its value constraint. |
+| `Not Supported` | The vendor reports the parameter or action as unimplemented, or the server library sent the token itself: for an action with no registered handler, or, when built with `JSON_SCHEMA_VALIDATION_ENABLED`, in place of a vendor reply that failed the server's schema validation after the vendor had handled the request. | Do not conclude from the token alone that the path is unsupported or that a write was not applied; after a write, read the parameter back with `getParameters` before retrying or ceasing to use the path. It is the expected answer for a path in `getParameterOptionalList` the vendor omits. |
+
+The table applies to every `result`, including the one that acknowledges `setParameters`, except
+the acknowledgement of a subscription, whose status cannot be read (`Asynchronous Notification
+Model`).
+
+**Vendor Obligation:** The server answers every request, including one it cannot satisfy: an
+unanswered request costs the caller its full wait and tells it nothing. It chooses the status that
+describes the actual outcome rather than `Failed` for every refusal, and never reports `Success` for
+a write it did not apply.
+
+### Persistence Model
+
+**Write Acknowledgement:** A `Success` result acknowledges a write; it shows neither that the value
+was applied nor that it was stored. The contract has no notion of a stored value, so a caller
+re-applies any value it needs after a restart of either side of the socket, and reads it back when
+the effect matters.
+
+**Correlation State:** It belongs to the client process, not to the connection. `reqId` comes from a
+process-wide counter that survives a reconnection and a client teardown and resets only when the
+client process restarts, so identifiers repeat across runs. A server echoes `reqId` unchanged as an
+opaque token, and a caller never uses it as a durable key.
+
+**Read Caching:** The `RdkGponManager` component caches some reads. It does not re-read the `TR69`,
+`Omci`, `Ploam` or `Gtc` object within 10 seconds of its last read, so a value read through the
+manager's `TR-181` data model can be up to 10 seconds old, while a value read directly over this HAL
+is as current as the vendor server makes it.
+
+**Vendor Obligation:** The server answers with values current at the time of the reply, or documents
+its own sampling interval.
+
+## Non functional requirements
+
+The following non-functional requirements apply to a vendor implementation of the GPON `JSON` HAL
+server and, where stated, to the client side of the interface.
+
+### Logging and debugging requirements
+
+Vendor software records all errors and critical informative messages, so that the functional flow
+across the socket can be identified and debugged. Logging uses the `syslog` mechanism, which is
+suited to system-level software; `printf` is discouraged unless `syslog` is unavailable.
+
+Logs are categorized by the following levels, as defined by the Linux standard logging system and
+listed in descending order of severity:
+
+- **FATAL:** Critical conditions, typically indicating a crash or a failure that requires immediate
+  attention.
+- **ERROR:** Non-fatal error conditions that nonetheless significantly impede normal operation.
+- **WARNING:** Potentially harmful situations that do not yet represent errors.
+- **NOTICE:** Important but not error-level events.
+- **INFO:** General informational messages that highlight system operation.
+- **DEBUG:** Detailed information useful when diagnosing a problem.
+- **TRACE:** Very fine-grained logging that traces internal flow.
+
+Each entry carries a timestamp, the level and a message describing the event, so that logs from
+different vendors and components can be parsed and correlated uniformly.
+
+Implementations must not log credentials, secrets, security-sensitive information, or other sensitive data.
+The rule applies to the vendor server and the client side alike, at every level including `DEBUG` and
+`TRACE`, and to crash artefacts, captured messages and telemetry. A message that has to refer to a
+sensitive value names the action, the parameter path and the outcome, never the value.
+
+Production builds of either side of the transport are built without `DEBUG_ENABLED`, which writes
+whole messages, values included, to standard error. Any capture of the socket traffic holds every
+value exchanged and is subject to the rule above: capture only synthetic or redacted exchanges, and
+never share a raw capture.
+
+### Memory and performance requirements
+
+**Caller Responsibilities:** The caller allocates and releases the `json_object` handles as
+`Memory Model` requires.
+
+**Vendor Implementation Responsibility:** A vendor server allocates whatever it needs internally and
+is solely responsible for releasing it. No allocation and no pointer crosses the process boundary,
+so a vendor's allocation policy cannot affect the caller's heap.
+
+**Performance Contract:** The reply window in `Blocking calls` is the practical performance
+requirement: a server that cannot answer within about 10 seconds makes the untimed form that
+`RdkGponManager` uses time out. Each request costs a full round trip, so the cost of reading the
+`ONT` is set by the number of requests rather than by their size. `RdkGponManager` reads by object
+prefix — seven requests for the whole tree rather than one per parameter — and a caller follows the
+same pattern, keeping each request within the 16384-byte bound in `Memory Model`.
+
+### Quality Control
+
+To ensure quality and reliability, third-party analysis tools such as `Coverity`, `Black Duck` and
+`Valgrind` are used to analyse a vendor implementation, so that memory leaks, memory corruption and
+other defects are found before deployment. Both the vendor server and any client linking the
+transport library practise disciplined allocation, release and error handling, for the reasons
+`Memory Model` sets out.
+
+**Schema Validation:** Validate every message against the shipped schema. The contract is a
+machine-readable `draft-07` schema, so conformance is testable directly: a request or reply is
+validated against `hal_schema/gpon_hal_schema.json`, or against
+`hal_schema/gpon_wan_unify_hal_schema.json` in a `WAN_MANAGER_UNIFICATION_ENABLED` build, since a
+message can be valid under one and invalid under the other. The eight shipped
+`hal_schema/example_*_msg.json` files are illustrations rather than conformance fixtures: not all of
+them validate against the schema beside them, and one names another HAL's schema path.
+[halSpecDetailed.md](halSpecDetailed.md) records each file's disposition and gives corrected
+exchanges.
+
+**Meta-Schema Failures:** The schemas fail the `draft-07` meta-schema in exactly two places each,
+both an empty `anyOf` array, under `deleteObject` and under `setParameterOptionalList`. A test suite
+that adds a meta-schema check expects those two failures per file and fails on any third;
+[halSpecDetailed.md](halSpecDetailed.md) records them under `Contract Defects`.
+
+**Freshness Trigger:** Any change to a file listed in `Source References` obliges a
+review of the topics that rely on it. The responsible reviewer is the repository's code owner,
+`@rdkcentral/wanmanager-maintainers`, and a pull request that changes a listed file carries that
+review.
+
+### Licensing
+
+The GPON HAL contract and this repository are licensed under the **Apache License, Version 2.0**. A
+vendor implementation of the HAL server is expected to be released under the same licence.
+
+The licence text and the attribution notice ship with the repository as `LICENSE`, `COPYING` and
+`NOTICE` at its root, and are rendered alongside this specification in the generated documentation
+through the [LICENSE.md](LICENSE.md), [COPYING.md](COPYING.md) and [NOTICE.md](NOTICE.md) symlinks
+in this folder. Every source file in the repository carries the Apache-2.0 header.
+
+### Build Requirements
+
+**HAL Library:** No HAL library is built from this repository, and none is linked across the HAL
+boundary. There is no `libhal_*` artefact to produce for the HAL, no header to install for the
+contract, and no symbol a vendor must export. A vendor delivers a **process** that speaks the
+protocol and validates against the shipped schema; this repository delivers the schema file,
+deployed to the path `Variability Management` names.
+
+**Client-Side Linking:** The manager builds with `autotools` and should be capable of
+building under the Yocto distribution environment. The middle layer that contains all HAL
+interaction links `-lccsp_common -lhal_platform -ljson_hal_client -ljson-c -lpthread -lsyscfg`, and
+the manager binary additionally links the `RDK-B` logging and secure-wrapper libraries.
+
+**Transport Library:** `json_hal_client`, and the server library a vendor builds against, come
+from `json-hal-library` at commit `86a0a300b976f8e3295064af8fb3fd1c793c9e64`. A vendor
+implementing the server side uses `json_hal_server_init()`,
+`json_hal_server_register_action_callback()`, `json_hal_server_run()`,
+`json_hal_server_publish_event()` and `json_hal_server_terminate()`.
+
+**The `json-c` Dependency:** It takes two forms. The transport library declares its dependency as
+`json-c (0.11)`, which is the **declared minimum**; its upstream native build is exercised against
+the `json-c-0.15-20200726` revision. Neither figure is a deployment recommendation. Unpatched
+upstream `json-c 0.11` is affected by `CVE-2013-6370`, a buffer overflow; `CVE-2013-6371`, a
+hash-collision denial of service; and `CVE-2020-12762`, an integer overflow leading to an
+out-of-bounds write, scored CVSS v3.1 7.8 HIGH with a local attack vector and fixed in
+`json-c 0.15`. The transport hands bytes read from the loopback socket to the `json-c` parser before
+any schema validation, so a hostile or malfunctioning local peer reaches the parser first. A
+production build therefore links a maintained `json-c` release at `0.15` or later, or a distribution
+build carrying backports of those fixes; a vendor that must build against `0.11` treats the
+backports as a release condition.
+
+### Variability Management
+
+**Schema Version:** It is `0.0.1`, and it is not the caller's to change. The envelope's `version`
+field is bound to `definitions.schemaVersion`, a `const` of `0.0.1` in both shipped schemas, whose
+description states: "DO NOT modify the value of the version string. HAL operation cannot be
+performed without correct supported version." The schema's top-level description adds: "DO NOT
+modify the contents of this schema file. RDK community team make necessary changes and release." A
+vendor aligns its implementation with a released version of the contract rather than editing the
+deployed file, and each released interface is versioned per Semantic Versioning 2.0.0.
+
+**Variant Selection:** The schema variant is selected in two steps. First, a compile-time flag picks
+the client configuration file:
+
+```c
+#if defined(WAN_MANAGER_UNIFICATION_ENABLED)
+#define GPON_MANAGER_CONF_FILE "/etc/rdk/conf/gpon_manager_wan_unify_conf.json"
+#else
+#define GPON_MANAGER_CONF_FILE "/etc/rdk/conf/gpon_manager_conf.json"
+#endif
+```
+
+Second, the chosen configuration, shipped as `config/gpon_manager_conf.json` or
+`config/gpon_manager_wan_unify_conf.json`, names the schema and the port:
+
+| Build | Configuration file the manager reads | Schema the configuration names | Server port |
+| --- | --- | --- | --- |
+| Default | `/etc/rdk/conf/gpon_manager_conf.json` | `/etc/rdk/schemas/gpon_hal_schema.json` | `40100` |
+| `WAN_MANAGER_UNIFICATION_ENABLED` defined | `/etc/rdk/conf/gpon_manager_wan_unify_conf.json` | `/etc/rdk/schemas/gpon_wan_unify_hal_schema.json` | `40100` |
+
+So the flag selects the configuration and the configuration selects the contract. The port is the
+same either way, so a vendor server cannot infer the variant from it.
+
+**Other Variability:** Nothing else varies. There is no runtime capability negotiation, no feature
+flag on the wire and no version handshake beyond the fixed `version` field. The closest available
+check is `getSchema`, which returns the path of the schema the server uses, with the handling
+`Method Sequencing` sets out.
+
+### Platform or Product Customization
+
+**Customization Flag:** One compile-time flag customizes this interface:
+`WAN_MANAGER_UNIFICATION_ENABLED`. It presents
+the `ONT`'s optical interface with the standard `TR-181` interface controls, which the default build
+does not expose. Beyond the schema it selects, as `Variability Management` sets out, it changes:
+
+| Effect | Default build | `WAN_MANAGER_UNIFICATION_ENABLED` |
+| --- | --- | --- |
+| Parameter definitions | 90 | 95 |
+| Writable parameters | 8 | 11 |
+| Datatypes in use | `string`, `int`, `unsignedInt`, `unsignedLong` | the same, plus `boolean` |
+| Vendor server process | started by the platform | started by `RdkGponManager` before its client initializes |
+
+**Added Parameters:** The five parameters the variant adds are on
+`Device.X_RDK_ONT.PhysicalMedia.{i}.`: `Enable`, `Alias` and `LowerLayers` are writable,
+`LastChange` and `Upstream` are read-only, and `Enable` and `Upstream` are the `boolean` parameters
+a vendor server serving the variant must handle. [halSpecDetailed.md](halSpecDetailed.md) gives each
+one's constraint and meaning under `Parameter Reference`. The manager's own `TR-181` code for the
+added paths is compiled under the same flag, so configuration, schema and manager code always move
+together.
+
+**Vendor Server Start-Up:** The manager starts the vendor server in a
+`WAN_MANAGER_UNIFICATION_ENABLED` build. Before
+initializing its client it runs `/bin/json_hal_server_gpon` if that file exists and
+`/usr/bin/json_hal_server_gpon` otherwise, passing `/etc/rdk/conf/gpon_manager_wan_unify_conf.json`
+as the only argument. A vendor packaging a server for that build installs it under one of those two
+names and accepts that argument.
+
+**Unchanged Surface:** Everything else in the contract is identical in both variants,
+as `Optional Components` and `Variability Management` set out, so a vendor server can be written
+once against the variant schema and serve both builds, provided it answers `Not Supported` for a
+parameter the deployed schema does not include.
+
+## Interface API Documentation
+
+The interface is defined by the `JSON` Schema files under `hal_schema/`, which are the authority for
+every field, action, path and constraint named below.
+
+### Theory of operation and key concepts
+
+A caller does not call functions on this HAL; it exchanges messages with a peer process. Four
+concepts carry that difference.
+
+**Envelope:** The envelope is the call. Every message, in either direction, carries the same four
+required fields — `module`, `version`, `action` and `reqId` — and the `action` value decides what
+else the message must carry. There is no method name, argument list or return value in the C sense;
+there is an action and a payload whose shape the schema binds to that action.
+
+**Parameters as Data:** The data model is the parameter surface. What a C HAL expresses as getter
+and setter functions, this interface expresses as one `getParameters` action and one `setParameters`
+action applied to `TR-181` paths under `Device.X_RDK_ONT`. Adding a capability means adding a
+parameter definition to the schema, not adding an action.
+
+**Correlation:** It replaces the call stack. A reply is matched to its request by `reqId`, not by
+ordering on the connection, and the client library performs that match before returning the reply.
+This is what lets an unsolicited `publishEvent` share the connection with request and reply traffic.
+
+**Validation:** Each side validates what it receives. The pinned transport validates no inbound
+message, and a server built with `JSON_SCHEMA_VALIDATION_ENABLED` checks only its own replies. A
+caller therefore validates a reply or event against the schema its configuration names before acting
+on it, and a vendor server validates each request before acting on it. The constraints most worth
+checking are the `name` patterns, which decide whether a path is addressable at all, and the
+datatype `const` on each parameter; [halSpecDetailed.md](halSpecDetailed.md) sets out
+`The validation boundary`.
+
+#### Object Lifecycles
+
+**Client Lifecycle:** The client has a lifecycle; the connection has no session. The client is
+initialized, started, confirmed connected, used and optionally terminated, as
+`Initialization and Startup` describes. No action opens or closes a conversation and no state is
+established by a first message, so a server treats each request as complete in itself.
+
+**Instance Ownership:** Object instances belong to the vendor. No action creates an instance of the
+three instanced segments `API Surface` lists, `PhysicalMedia`, `Gem` and `Veip`, and `deleteObject`
+is unsupported, so the instance set is whatever the vendor's hardware presents.
+
+**Server-Side State:** Subscriptions are the only client-created state on the server side. A caller
+keeps its own record of them and re-subscribes after a reconnection, as
+`Asynchronous Notification Model` describes.
+
+#### Method Sequencing
+
+**Initialization First:** The client completes the three steps of `Initialization and Startup`.
+
+**Schema Mismatch:** The `getSchema` action is how a caller detects a schema mismatch. It is not a
+prerequisite for anything else, since the client has its own schema path from its configuration, but
+`SchemaInfo.FilePath` in the `getSchemaResponse` is the server's view, and comparing the two is the
+only way to detect that the sides run different contracts. The returned path is a string the peer
+chooses, constrained only to the shape `^(.+)/([^/]+)$`, so it is untrusted input and three rules
+apply:
+
+- **Comparison Only:** Compare it; never dereference it. Compare it as an exact byte string with the
+  schema path the client's own configuration names — `/etc/rdk/schemas/gpon_hal_schema.json` or
+  `/etc/rdk/schemas/gpon_wan_unify_hal_schema.json`. Never open, stat or load it, pass it to a shell
+  or loader, or interpolate it into a path, a command line or a `URL`.
+- **Mismatch Reporting:** Treat any other value as a mismatch to report. Log the mismatch without
+  the value, then continue against the client's own configured schema or fail initialization; never
+  adopt the server's path.
+- **No Echo:** Do not echo it in a log line, a `TR-181` parameter, a telemetry field or an
+  operator-visible message.
+
+The shipped `hal_schema/example_getSchemaResponse_msg.json` shows the case: it validates and returns
+`/etc/rdk/hal_schemas/xtm_hal_schema.json`, a directory no `GPON` configuration names and a contract
+belonging to another HAL. [halSpecDetailed.md](halSpecDetailed.md) gives the corrected exchange.
+
+**Subscription First:** Subscribe with `subscribeEvent` before any `publishEvent` can arrive. An
+event is sent only for a subscribed parameter, and `Asynchronous Notification Model` lists the two
+that can be subscribed.
+
+**Ordering:** Reads and writes are otherwise unordered. A caller that needs one request to precede
+another issues both from one thread, as `Threading Model` requires, and confirms a write whose
+effect matters by reading it back, as `Internal Error Handling` describes.
+
+#### State-Dependent Behavior
+
+**Before Connection:** `json_hal_client_init()` and `json_hal_client_run()` are the only meaningful
+calls, and `json_hal_is_client_connected()` is the test. A request sent in this state fails as a
+transport failure rather than returning an application status.
+
+**After Connection Loss:** The same test distinguishes a transport problem from a vendor refusal.
+The client reconnects when the server becomes available again, as `Process Model` describes, and a
+caller tests connectivity before attributing a run of failures to the server.
+
+**Current Values:** Parameter values reflect the `ONT`'s current condition. Optical counters, alarm
+flags, registration state and `VEIP` states return what is true when the vendor answers. The schemas
+constrain which values a parameter may hold, not the order in which it holds them; `State Diagram`
+lists the status values.
+
+### Data Structures and Defines
+
+There is no C header here and therefore no C type; the equivalents are schema definitions. A caller
+builds and reads four kinds:
+
+- **Envelope:** The four required fields `Theory of operation and key concepts` names.
+- **Payload Shapes:** `API Surface` assigns three to actions: the `params` array of parameter
+  entries, whose required members depend on the action; the `Result` object, carrying `Status`; and
+  the `SchemaInfo` object, carrying `FilePath`.
+- **Parameter and Object Definitions:** A parameter definition binds a `TR-181` path in `name`, its
+  datatype in a `type` `const` and its allowed values in a `value` constraint, and the parameter is
+  writable only when `setParameterSupportedList` lists it. An object definition carries `name` alone
+  and is what a prefix read addresses. `Platform or Product Customization` lists the datatypes each
+  build uses.
+- **Named Enumerations:** There are nine: `action`, `resultStatusEnumList`, `notificationType`,
+  `statusEnumList`, `alarmEnumList`, `lockEnumList`, `redundancyStateEnumList`, `ponModeEnumList`
+  and `physicalConnectorEnumList`. `Internal Error Handling` gives the `resultStatusEnumList` values
+  and `State Diagram` the status values.
+
+[halSpecDetailed.md](halSpecDetailed.md) carries the depth: `Transport and Protocol` for the
+envelope, payloads and per-action entry members, `Object Index` and `Parameter Reference` for every
+definition, and `Enumeration Appendix` for every enumeration's members.
+
+### API Surface
+
+The protocol detail behind this topic — every parameter and object definition, worked message
+exchanges and the contract defects — is in [halSpecDetailed.md](halSpecDetailed.md).
+
+**Action Values:** Where a C HAL has functions, this interface has eleven action values. They are
+the complete callable surface, declared by `definitions.action` in both schemas in the same order:
+
+| Action | Originated by | Payload it must carry |
+| --- | --- | --- |
+| `getSchema` | Client | none — bare envelope |
+| `getParameters` | Client | `params` |
+| `getParametersResponse` | Server | `params` |
+| `setParameters` | Client | `params` |
+| `subscribeEvent` | Client | `params` |
+| `getActiveSubscriptions` | Client | none — bare envelope |
+| `getActiveSubscriptionsResponse` | Server | none — bare envelope |
+| `getSchemaResponse` | Server | `SchemaInfo` |
+| `publishEvent` | Server | `params` |
+| `deleteObject` | Client | `params` — **unsupported; see below** |
+| `result` | Server | `Result` |
+
+**No Write Response:** There is no `setParametersResponse`. A write is acknowledged by the generic
+`result` action carrying `Result.Status`, and so is a subscription. `getParameters`, `getSchema` and
+`getActiveSubscriptions` each have a matching named response.
+
+**Object Deletion:** The `deleteObject` action is unsupported. Its payload definition is an empty
+`anyOf`, so no schema-valid delete message exists under either shipped schema: a caller does not
+attempt object deletion through this interface, and a vendor need not implement it.
+[halSpecDetailed.md](halSpecDetailed.md) records the defect under `Contract Defects`.
+
+**Object Tree:** Every parameter lives under `Device.X_RDK_ONT`, across seven named segments:
+
+| Segment | Path | Parameters (default / variant) | What it covers |
+| --- | --- | --- | --- |
+| `PhysicalMedia` | `Device.X_RDK_ONT.PhysicalMedia.{i}.` | 36 / 41 | Transceiver identity and status, optical signal levels and thresholds, voltage, bias, temperature, and the 14 alarms |
+| `Gem` | `Device.X_RDK_ONT.Gem.{i}.` | 18 / 18 | `GEM` port state and its Ethernet flow, including `C-VLAN` and `S-VLAN` tag handling |
+| `Veip` | `Device.X_RDK_ONT.Veip.{i}.` | 13 / 13 | `VEIP` administrative and operational state and its `Q-VLAN` Ethernet flows |
+| `Ploam` | `Device.X_RDK_ONT.Ploam.` | 10 / 10 | Registration state, registration timers and `PLOAM` counters |
+| `Gtc` | `Device.X_RDK_ONT.Gtc.` | 8 / 8 | `GTC` framing counters and `FEC` corrected and uncorrected counts |
+| `Omci` | `Device.X_RDK_ONT.Omci.` | 3 / 3 | `OMCI` message counts and `MIC` error count |
+| `TR69` | `Device.X_RDK_ONT.TR69.` | 2 / 2 | The `ACS` address and the associated tag passed from the `OMCI` domain to the `TR-069` domain |
+| **Total** | | **90 / 95** | |
+
+**Bulk Reads:** They address an object prefix. A `getParameters` entry can name an object path
+rather than a leaf, and `RdkGponManager` reads the tree one request per segment. The singleton
+prefixes `Device.X_RDK_ONT.Gtc.`, `Device.X_RDK_ONT.Ploam.`, `Device.X_RDK_ONT.Omci.` and
+`Device.X_RDK_ONT.TR69.` are exact `const` names and are valid. The instanced prefixes
+`Device.X_RDK_ONT.PhysicalMedia.`, `Device.X_RDK_ONT.Gem.` and `Device.X_RDK_ONT.Veip.` require an
+instance number, so a caller addresses them per instance, as `Device.X_RDK_ONT.PhysicalMedia.1.`;
+the bare form does not validate, as the shipped `hal_schema/example_getParameters_msg.json` shows.
+[halSpecDetailed.md](halSpecDetailed.md) records the defect under `Contract Defects` and gives a
+corrected read.
+
+### Sequence Diagram
+
+The exchange below shows a cold start, one write, one read and one event subscription, using the
+client entry points and the action names of this interface.
+
+```mermaid
+sequenceDiagram
+    participant Mgr as RdkGponManager
+    participant Cli as json_hal_client
+    participant Srv as Vendor JSON HAL Server
+    Mgr->>Cli: json_hal_client_init("/etc/rdk/conf/gpon_manager_conf.json")
+    note over Cli: reads server_port, hal_schema_path, moduleName and schemaVersion
+    Mgr->>Cli: json_hal_client_run()
+    Cli->>Srv: TCP connect to 127.0.0.1:40100
+    Mgr->>Cli: json_hal_is_client_connected()
+    note over Mgr,Cli: polled up to 10 times, 1s apart, before initialization fails
+    Mgr->>Cli: json_hal_client_get_request_header("setParameters")
+    Mgr->>Cli: json_hal_add_param(request, SET_REQUEST_MESSAGE, &param)
+    Mgr->>Cli: json_hal_client_send_and_get_reply(request, &reply)
+    Cli->>Srv: setParameters, params PhysicalMedia.1.RxPower.SignalLevelLowerThreshold
+    Srv-->>Cli: result with matching reqId
+    Cli-->>Mgr: reply
+    Mgr->>Cli: json_hal_get_result_status(reply, &status)
+    Mgr->>Cli: json_hal_client_get_request_header("getParameters")
+    Mgr->>Cli: json_hal_client_send_and_get_reply(request, &reply)
+    Cli->>Srv: getParameters, params Device.X_RDK_ONT.Gtc.
+    Srv-->>Cli: getParametersResponse with matching reqId
+    Cli-->>Mgr: reply
+    Mgr->>Cli: json_hal_get_total_param_count(reply)
+    Mgr->>Cli: json_hal_get_param(reply, i, GET_RESPONSE_MESSAGE, &param)
+    Mgr->>Cli: json_hal_client_subscribe_event(callback, "Device.X_RDK_ONT.PhysicalMedia.1.Status", "onChange")
+    Cli->>Srv: subscribeEvent, params name and notificationType
+    Srv-->>Cli: result with matching reqId
+    Srv->>Cli: publishEvent, params name, type and value
+    Cli->>Mgr: event callback with the raw message, on the client socket thread
+```
+
+The write is answered by `result` and the read by `getParametersResponse`. The read names the
+singleton prefix `Device.X_RDK_ONT.Gtc.`, which is addressable for the reason `API Surface` gives.
+
+### State Diagram
+
+**Status Values:** No state diagram is drawn, because the schemas define status values but no
+transitions between them. The status-bearing parameters and their values:
+
+| Parameter | Values | Meaning |
+| --- | --- | --- |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.Status` | `statusEnumList`: `Up`, `Down`, `Unknown`, `Dormant`, `NotPresent`, `LowerLayerDown`, `Error` | Operational status of the optical interface at physical level |
+| `Device.X_RDK_ONT.Veip.{i}.OperationalState` | Inline: `Up`, `Down`, `Unknown`, `Dormant`, `NotPresent`, `LowerLayerDown`, `Error` | Operational status of the `VEIP` interface |
+| `Device.X_RDK_ONT.Veip.{i}.AdministrativeState` | `lockEnumList`: `Lock`, `Unlock` | Whether the `VEIP` interface is administratively locked |
+| `Device.X_RDK_ONT.Ploam.RegistrationState` | Inline: `O1`, `O2`, `O3`, `O4`, `O5`, `O6`, `O7`, `O8`, `O9` | The registration state of the `ONT` |
+| The 14 `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.` parameters | `alarmEnumList`: `Active`, `Inactive` | Whether an optical alarm is currently raised |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.RedundancyState` | `redundancyStateEnumList`: `Active`, `Standby` | Which of a redundant pair of optical interfaces is in service |
+
+Every value above is readable with `getParameters`. All but `RedundancyState` can be delivered by
+`publishEvent`, and only the optical status and the `VEIP` administrative state can be subscribed
+to, as `Asynchronous Notification Model` sets out.
+
+**Registration States:** The values `O1` to `O9` are the `ONU` activation state names of
+`ITU-T G.984.3`.
+
+**Caller Practice:** It reads the current value rather than tracking transitions:
+`Device.X_RDK_ONT.Ploam.RegistrationState` for registration, `PhysicalMedia.{i}.Status` for the
+optical interface and the alarm parameters for fault conditions, subscribing where a subscription is
+valid. It treats any value as possible at any time. No single parameter reports whether the `ONT` as
+a whole is operational: a caller forms that judgement from the registration state, the optical
+status and the alarms, and handles the transport's connection state separately, as `Process Model`
+describes.
+
+## Source References
+
+- [rdkcentral/gpon-manager/hal_schema/gpon_hal_schema.json](https://github.com/rdkcentral/gpon-manager/blob/main/hal_schema/gpon_hal_schema.json) — the default-build `JSON` HAL schema
+- [rdkcentral/gpon-manager/hal_schema/gpon_wan_unify_hal_schema.json](https://github.com/rdkcentral/gpon-manager/blob/main/hal_schema/gpon_wan_unify_hal_schema.json) — the `WAN_MANAGER_UNIFICATION_ENABLED` schema variant
+- [rdkcentral/gpon-manager/hal_schema/example_getParameters_msg.json](https://github.com/rdkcentral/gpon-manager/blob/main/hal_schema/example_getParameters_msg.json) — shipped example of a bare instanced-prefix read
+- [rdkcentral/gpon-manager/hal_schema/example_getSchemaResponse_msg.json](https://github.com/rdkcentral/gpon-manager/blob/main/hal_schema/example_getSchemaResponse_msg.json) — shipped example returning another HAL's schema path
+- [rdkcentral/gpon-manager/config/gpon_manager_conf.json](https://github.com/rdkcentral/gpon-manager/blob/main/config/gpon_manager_conf.json) — default client configuration: schema path and port
+- [rdkcentral/gpon-manager/config/gpon_manager_wan_unify_conf.json](https://github.com/rdkcentral/gpon-manager/blob/main/config/gpon_manager_wan_unify_conf.json) — variant client configuration
+- [rdkcentral/gpon-manager/config/RdkGponManager.xml](https://github.com/rdkcentral/gpon-manager/blob/main/config/RdkGponManager.xml) — the manager's `TR-181` data-model description
+- [rdkcentral/gpon-manager/source/TR-181/middle_layer_src/gponmgr_dml_hal.c](https://github.com/rdkcentral/gpon-manager/blob/main/source/TR-181/middle_layer_src/gponmgr_dml_hal.c) — client bring-up, variant selection, request and subscription calls, read caching
+- [rdkcentral/gpon-manager/source/TR-181/middle_layer_src/gponmgr_dml_hal.h](https://github.com/rdkcentral/gpon-manager/blob/main/source/TR-181/middle_layer_src/gponmgr_dml_hal.h) — parameter paths and the subscription notification type
+- [rdkcentral/gpon-manager/source/TR-181/middle_layer_src/gponmgr_dml_func.c](https://github.com/rdkcentral/gpon-manager/blob/main/source/TR-181/middle_layer_src/gponmgr_dml_func.c) — `TR-181` handlers that reach the HAL
+- [rdkcentral/gpon-manager/source/TR-181/middle_layer_src/Makefile.am](https://github.com/rdkcentral/gpon-manager/blob/main/source/TR-181/middle_layer_src/Makefile.am) — middle-layer link libraries
+- [rdkcentral/gpon-manager/source/GponManager/gponmgr_controller.c](https://github.com/rdkcentral/gpon-manager/blob/main/source/GponManager/gponmgr_controller.c) — event subscriptions issued at startup
+- [rdkcentral/gpon-manager/source/GponManager/gponmgr_link_state_machine.c](https://github.com/rdkcentral/gpon-manager/blob/main/source/GponManager/gponmgr_link_state_machine.c) — link state machine thread that reaches the HAL
+- [rdkcentral/gpon-manager/source/GponManager/Makefile.am](https://github.com/rdkcentral/gpon-manager/blob/main/source/GponManager/Makefile.am) — manager binary link libraries
+- [rdkcentral/gpon-manager/.github/CODEOWNERS](https://github.com/rdkcentral/gpon-manager/blob/main/.github/CODEOWNERS) — the repository's code owner
+- [rdkcentral/gpon-manager/CHANGELOG.md](https://github.com/rdkcentral/gpon-manager/blob/main/CHANGELOG.md) — release history
+- [rdkcentral/gpon-manager/LICENSE](https://github.com/rdkcentral/gpon-manager/blob/main/LICENSE) — Apache License, Version 2.0 text
+- [rdkcentral/gpon-manager/COPYING](https://github.com/rdkcentral/gpon-manager/blob/main/COPYING) — copy of the `LICENSE` text
+- [rdkcentral/gpon-manager/NOTICE](https://github.com/rdkcentral/gpon-manager/blob/main/NOTICE) — attribution notice
+- [rdkcentral/json-hal-library/json_hal_client.h](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/json_hal_client.h) — client entry points
+- [rdkcentral/json-hal-library/json_hal_client.c](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/json_hal_client.c) — reply wait budget, event dispatch, request tracking, `reqId` counter, request-header and result-status helpers
+- [rdkcentral/json-hal-library/json_hal_common.h](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/json_hal_common.h) — configuration and parameter helpers
+- [rdkcentral/json-hal-library/json_hal_common.c](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/json_hal_common.c) — configuration and schema loading, parameter copy into `hal_param_t`
+- [rdkcentral/json-hal-library/json_hal_server.h](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/json_hal_server.h) — server entry points a vendor implements against
+- [rdkcentral/json-hal-library/json_hal_server.c](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/json_hal_server.c) — server dispatch, optional reply validation and `Not Supported` replies
+- [rdkcentral/json-hal-library/json-rpc-common/json_rpc_common.h](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/json-rpc-common/json_rpc_common.h) — buffer size, notification types, datatypes and logging macros
+- [rdkcentral/json-hal-library/tcp_client.h](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/tcp_client.h)
+  — loopback server address
+- [rdkcentral/json-hal-library/tcp_client.c](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/tcp_client.c) — client connection, send and receive loop
+- [rdkcentral/json-hal-library/tcp_server.c](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/tcp_server.c) — server receive buffer, listen backlog and loopback bind
+- [rdkcentral/json-hal-library/README.md](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/README.md) — transport description and declared `json-c` dependency
+- [rdkcentral/json-hal-library/cov_docker_script/component_config.json](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/cov_docker_script/component_config.json) — `json-c` revision used by the upstream build
+
