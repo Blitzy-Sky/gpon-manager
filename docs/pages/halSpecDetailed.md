@@ -1,4 +1,4 @@
-# GPON HAL Detailed Parameter Reference
+# GPON HAL Detailed API Reference
 
 ## Purpose
 
@@ -8,7 +8,7 @@ declares, it gives the `TR-181` path, the wire datatype, the value constraint, t
 enforces and the meaning the schema states. The interface overview — architecture, initialization,
 threading, memory and blocking behaviour — is in [halSpec.md](halSpec.md).
 
-**Each schema file has one consumer, `RdkGponManager`, and a build loads exactly one file.**
+**Each schema file has one consumer, `RdkGponManager`, and a build loads exactly one file:**
 `hal_schema/gpon_hal_schema.json` declares 90 parameter definitions and is loaded by the default
 `RdkGponManager` build. `hal_schema/gpon_wan_unify_hal_schema.json` declares 95 and is loaded by an
 `RdkGponManager` build that defines `WAN_MANAGER_UNIFICATION_ENABLED`. `Deployment contract` gives the
@@ -31,20 +31,20 @@ to a definition; `reqId` is declared inline on the schema root.
 
 | Field | Bound to | Form | Set by |
 | --- | --- | --- | --- |
-| `module` | `moduleName` | `string`, `const` `gponhal` | Read by the client out of the deployed schema file |
-| `version` | `schemaVersion` | `string`, `const` `0.0.1` | Read by the client out of the deployed schema file |
-| `action` | `action` | `string`, one of the eleven members below | The caller, per request |
-| `reqId` | declared inline | `string` matching `^[0-9]+$` | The client library, one per request header |
+| `module` | `moduleName` | JSON `string`; const `gponhal` | Read by the client out of the deployed schema file |
+| `version` | `schemaVersion` | JSON `string`; const `0.0.1` | Read by the client out of the deployed schema file |
+| `action` | `action` | JSON `string`; one of the eleven members below | The caller, per request |
+| `reqId` | declared inline | JSON `string`; pattern `^[0-9]+$` | The client library, one per request header |
 
 The `schemaVersion` description states "DO NOT modify the value of the version string. HAL operation
 cannot be performed without correct supported version.", so no sender alters `0.0.1`.
 
-**Members beyond the four are accepted.** Neither schema root declares `additionalProperties: false`,
+**Members beyond the four are accepted:** Neither schema root declares `additionalProperties: false`,
 so a message carrying members beyond the four required fields and the payload its action binds still
 validates. A caller sends only what an action binds, and a server does not rely on an unknown member
 being rejected.
 
-**The `reqId` field is a decimal counter zero-padded to at least eight digits.** The client formats it with
+**The `reqId` field is a decimal counter zero-padded to at least eight digits:** The client formats it with
 `sprintf(id, "%8.8d", req_id)`, which pads a shorter value to eight characters and does not truncate
 a longer one. The counter starts at `100` and increments once per request header, so the first
 request of a fresh process carries `"00000101"`, and the identifier grows to nine and then ten
@@ -55,7 +55,7 @@ be asserted beyond that point. The client parses a received `reqId` with `strtol
 but a `reqId` containing a hexadecimal letter would be parsed differently from how it was written. A
 server echoes the identifier it was sent, unchanged.
 
-**A server accepts at most 63 bytes of `reqId`.** The schema sets no `maxLength`, but the pinned
+**A server accepts at most 63 bytes of `reqId`:** The schema sets no `maxLength`, but the pinned
 server copies the value into 64-byte arrays without terminating an over-long one (see
 `Fixed-size buffers on the receive path` under `Contract Defects`). A server therefore validates
 presence, pattern and a length of at most 63 bytes before dispatching on the value. The shipped
@@ -63,13 +63,13 @@ client never exceeds the bound; a caller building its own envelope must not eith
 
 ### Message boundaries
 
-**Nothing frames a message on this transport, so every message must fit in one read.** There is no
+**Nothing frames a message on this transport, so every message must fit in one read:** There is no
 length prefix and no delimiter. Each side reads into a 16384-byte buffer (`MAX_BUFFER_SIZE`). The
 server reads once per readable descriptor and does not accumulate. The client accumulates only while
 a read fills the buffer, so it judges completeness by **buffer occupancy** rather than by `JSON`
 structure:
 
-- **A read that leaves room in the buffer is parsed as though the document were complete.** A message
+- **A read that leaves room in the buffer is parsed as though the document were complete:** A message
   below 16384 bytes is therefore not guaranteed to arrive whole: a split delivery hands truncated
   `JSON` to the parser at any size.
 - **A reply is not parsed while every read in its sequence comes back full**, and in that state the
@@ -89,11 +89,11 @@ exchange is treated as a possible truncation rather than as a refusal.
 `getActiveSubscriptions`, `getActiveSubscriptionsResponse`, `getSchemaResponse`, `publishEvent`,
 `deleteObject`, `result`.
 
-**There is no `setParametersResponse`.** A write is acknowledged by the generic `result` action
+**There is no `setParametersResponse`:** A write is acknowledged by the generic `result` action
 carrying `Result.Status`, which also answers `subscribeEvent`. `deleteObject` has no reply, because no
-valid `deleteObject` message exists (`Contract Defects`, D0).
+valid `deleteObject` message exists (`D1` under `Contract Defects`).
 
-**The transport names seven of the eleven actions as macros.** `json_rpc_common.h` defines
+**The transport names seven of the eleven actions as macros:** `json_rpc_common.h` defines
 `JSON_RPC_ACTION_GET_PARAM`, `JSON_RPC_ACTION_GET_PARAM_RESPONSE`, `JSON_RPC_ACTION_RESULT`,
 `JSON_RPC_ACTION_GET_SCHEMA`, `JSON_RPC_ACTION_GET_SCHEMA_RESPONSE`,
 `JSON_RPC_SUBSCRIBE_EVENT_ACTION_NAME` and `JSON_RPC_PUBLISH_EVENT_ACTION_NAME`. A caller passes
@@ -105,21 +105,21 @@ literal strings; `RdkGponManager` defines its own `SET_PARAMETER_METHOD` for the
 Eight of the eleven actions bind a payload through one of the schema root's eight `allOf` branches.
 Three bind nothing.
 
-| Action | Originated by | Payload the schema requires | Required members of each `params` entry |
+| Action | Direction | Payload the schema binds | Required members of each `params` entry |
 | --- | --- | --- | --- |
-| `getSchema` | Client | none — no payload binding | not applicable |
-| `getParameters` | Client | `params`, array, minimum 1 item, items unique | `name` |
-| `getParametersResponse` | Server | `params`, array, minimum 1 item, items unique | `name`, `type`, `value` |
-| `setParameters` | Client | `params`, array, minimum 1 item, items unique | `name`, `type`, `value` |
-| `subscribeEvent` | Client | `params`, array, minimum 1 item, items unique | `name`, `notificationType` |
-| `getActiveSubscriptions` | Client | none — no payload binding | not applicable |
-| `getActiveSubscriptionsResponse` | Server | none — no payload binding | not applicable |
-| `getSchemaResponse` | Server | `SchemaInfo`, object, `FilePath` required | not applicable |
-| `publishEvent` | Server | `params`, array, minimum 1 item, items unique | `name`, `type`, `value` |
-| `deleteObject` | Client | `params` — **uninstantiable**; see `Contract Defects` | `name`, but no value satisfies it |
-| `result` | Server | `Result`, object, `Status` required | not applicable |
+| `getSchema` | client to server | none — bare envelope | not applicable |
+| `getParameters` | client to server | `params`; JSON `array`; minItems 1; uniqueItems | `name` |
+| `getParametersResponse` | server to client | `params`; JSON `array`; minItems 1; uniqueItems | `name`, `type`, `value` |
+| `setParameters` | client to server | `params`; JSON `array`; minItems 1; uniqueItems | `name`, `type`, `value` |
+| `subscribeEvent` | client to server | `params`; JSON `array`; minItems 1; uniqueItems | `name`, `notificationType` |
+| `getActiveSubscriptions` | client to server | none — bare envelope | not applicable |
+| `getActiveSubscriptionsResponse` | server to client | none — bare envelope | not applicable |
+| `getSchemaResponse` | server to client | `SchemaInfo`; JSON `object`; `FilePath` required | not applicable |
+| `publishEvent` | server to client | `params`; JSON `array`; minItems 1; uniqueItems | `name`, `type`, `value` |
+| `deleteObject` | client to server | `params`; JSON `array`; minItems 1; uniqueItems; **uninstantiable**; see `D1` | `name`, but no value satisfies it |
+| `result` | server to client | `Result`; JSON `object`; `Status` required | not applicable |
 
-**An unbound action may still carry an empty `params` array.** A bare four-field envelope validates
+**An unbound action may still carry an empty `params` array:** A bare four-field envelope validates
 for `getSchema`, `getActiveSubscriptions` and `getActiveSubscriptionsResponse`. The transport's header
 helper, `json_hal_client_get_request_header()`, attaches an empty `params` array unless
 `strncmp(action_name, "getSchema", strlen("getSchema"))` matches. That is a prefix test, so
@@ -136,7 +136,7 @@ follow:
   has no array to append to, so a payload for either is attached with plain `json-c` calls — for
   `getSchemaResponse`, the `SchemaInfo` object the schema binds.
 
-**The `Result` and `SchemaInfo` objects forbid extension.** `Result` carries a single `Status` property and
+**The `Result` and `SchemaInfo` objects forbid extension:** `Result` carries a single `Status` property and
 `SchemaInfo` a single `FilePath` property, each with `additionalProperties: false`. `FilePath` must
 match `^(.+)/([^/]+)$`, so a bare filename does not validate.
 
@@ -149,7 +149,7 @@ over a named list rather than by a free-form shape, and that is what makes the s
 | Action | Entry must satisfy | Which means |
 | --- | --- | --- |
 | `getParameters`, `getParametersResponse` | `getParameterSupportedList` or `getParameterOptionalList` | Any of the 90 parameters or any of the 26 objects — 95 parameters in the variant. `getParametersResponse` additionally requires `type` and `value`, which excludes `ontPhysicalMediaAlarmObj`; see `The validation boundary` |
-| `setParameters` | `setParameterSupportedList` or `setParameterOptionalList` | The 8 writable parameters, or 11 in the variant. The optional list is empty; see `Contract Defects` |
+| `setParameters` | `setParameterSupportedList` or `setParameterOptionalList` | The 8 writable parameters, or 11 in the variant. The optional list is empty; see `D1` |
 | `subscribeEvent`, `publishEvent` | `subscribeEventSupportedList` | Exactly the 18 subscribable parameters, identical in both variants |
 | `deleteObject` | an empty `anyOf` | Nothing. The action is uninstantiable |
 
@@ -161,13 +161,13 @@ four definition kinds below an entry's `name` resolves to.
 
 ### The validation boundary
 
-**Nothing on this interface validates an inbound message against the deployed schema.**
+**Nothing on this interface validates an inbound message against the deployed schema:**
 
-- **The client validates nothing.** `json_hal_client_init()` calls `json_hal_load_config()` and wires
+- **The client validates nothing:** `json_hal_client_init()` calls `json_hal_load_config()` and wires
   the socket callbacks without initialising a validator, so neither a reply nor an inbound
   `publishEvent` is checked before it reaches the caller.
 - **The server validates only its own replies, and only when built with
-  `JSON_SCHEMA_VALIDATION_ENABLED`.** `json_hal_server_init()` then calls the validator wrapper's
+  `JSON_SCHEMA_VALIDATION_ENABLED`:** `json_hal_server_init()` then calls the validator wrapper's
   `json_validator_init`, and a reply the server generated that fails validation is replaced with a
   `Not Supported` result. An inbound request is never validated on either side.
 - **The schema root accepts unknown members**, so even a validator does not reject an unexpected
@@ -190,24 +190,24 @@ to:**
 The action's own `required` list applies on top of all four: an entry in a `getParametersResponse`,
 `setParameters` or `publishEvent` message carries `name`, `type` and `value` even where its
 definition constrains none of them, which is why `ontPhysicalMediaAlarmObj` cannot appear in a
-response (`Contract Defects`, D4).
+response (`D5`).
 
-**Boundary conditions.** Each row gives the schema verdict per definition kind and what reaches the
+**Boundary conditions:** Each row gives the schema verdict per definition kind and what reaches the
 peer at runtime, where nothing validates.
 
 | Condition | Schema verdict, by referenced definition | Runtime behaviour |
 | --- | --- | --- |
 | `value` present but `null` | **Invalid** against either leaf kind: every leaf constrains `value` by type. **Valid** against an open object, where `value` is an unconstrained extra member | Delivered unchecked. A caller inspects the `value` node before extracting it with `json_hal_get_param()` |
-| A required member of a `params` entry missing | **Invalid for all four kinds.** `required` is set by the action: `name` for `getParameters` and `deleteObject`, `name`/`type`/`value` for `setParameters`, `getParametersResponse` and `publishEvent`, `name`/`notificationType` for `subscribeEvent` | Delivered unchecked. For a missing `value` the extraction helper's outcome depends on the datatype; see `Missing value: five datatypes fail silently` |
+| A required member of a `params` entry missing | **Invalid for all four kinds:** `required` is set by the action: `name` for `getParameters` and `deleteObject`, `name`/`type`/`value` for `setParameters`, `getParametersResponse` and `publishEvent`, `name`/`notificationType` for `subscribeEvent` | Delivered unchecked. For a missing `value` the extraction helper's outcome depends on the datatype; see `Missing value: five datatypes fail silently` |
 | `params` present but an empty array | Invalid for every action that binds `params`, because each branch sets `minItems: 1`. Valid for the three actions with no binding, which is what the client's header helper produces for two of them | Delivered unchecked |
-| Two `params` entries naming the **same parameter** with different content | **Valid.** `uniqueItems` compares whole entry objects, not the `name` member, so it rejects only JSON-equal entries: the same members with equal values, in any member order. A two-entry `setParameters` on `Device.X_RDK_ONT.PhysicalMedia.1.RxPower.SignalLevelLowerThreshold` carrying `-30` and `-25` validates, as does a `subscribeEvent` naming `Device.X_RDK_ONT.PhysicalMedia.1.Status` twice with `interval` and `onChange` | Delivered unchecked. `result` carries one `Status` for the whole message, so a caller cannot learn which value was applied |
+| Two `params` entries naming the **same parameter** with different content | **Valid:** `uniqueItems` compares whole entry objects, not the `name` member, so it rejects only JSON-equal entries: the same members with equal values, in any member order. A two-entry `setParameters` on `Device.X_RDK_ONT.PhysicalMedia.1.RxPower.SignalLevelLowerThreshold` carrying `-30` and `-25` validates, as does a `subscribeEvent` naming `Device.X_RDK_ONT.PhysicalMedia.1.Status` twice with `interval` and `onChange` | Delivered unchecked. `result` carries one `Status` for the whole message, so a caller cannot learn which value was applied |
 | An unknown member alongside the four required envelope fields | Valid. The root declares no `additionalProperties: false` | Ignored: the pinned transport reads no member it does not expect |
-| An unknown member inside a `params` entry | **Invalid** against a closed leaf and against `ontPhysicalMediaAlarmObj`. **Valid** against `ontTR69url` and against all 25 open object definitions — see `Contract Defects` | Delivered unchecked |
+| An unknown member inside a `params` entry | **Invalid** against a closed leaf and against `ontPhysicalMediaAlarmObj`. **Valid** against `ontTR69url` and against all 25 open object definitions — see `D4` and `D5` | Delivered unchecked |
 | A `type` label that disagrees with the parameter's declared datatype | **Invalid** against either leaf kind, which binds `type` to a `const`. **Valid** against any object definition, which declares no `type` at all | Delivered unchecked; nothing cross-checks the label against the value |
-| A value outside the parameter's constraint | **Invalid** against a leaf, **except** for `PonMode` and `Connector`, whose enumeration reference is inert. **Unconstrained** against an open object — see `Contract Defects` | Delivered unchecked; the caller checks it, as `Numeric fidelity` below sets out |
+| A value outside the parameter's constraint | **Invalid** against a leaf, **except** for `PonMode` and `Connector`, whose enumeration reference is inert (`D2`). **Unconstrained** against an open object — see `D5` | Delivered unchecked; the caller checks it, as `Numeric fidelity` below sets out |
 | `reqId` sent as a `JSON` number rather than a string | Invalid. The envelope requires `string` | Correlation still works on the client, which stringifies before parsing. The pinned server's publish helper sends this form; see `Event Model` |
 
-**A parameter named twice in one message has no defined effect.** The schema gives `params` no
+**A parameter named twice in one message has no defined effect:** The schema gives `params` no
 order and acknowledges a write with a single `Result.Status`, so which of two values was applied
 cannot be learned from the reply. A caller de-duplicates `params` by `name` before dispatch and does not use
 entry order to express intent; a vendor that accepts duplicates documents which value it applies; and
@@ -216,7 +216,7 @@ a test does not read schema validity of a multi-entry message as evidence of wha
 ### Missing value: five datatypes fail silently
 
 **When a `params` entry omits `value`, `json_hal_get_param()` reports failure for three datatypes and
-success for five, and the successes are indistinguishable from a genuine zero.** The helper zeroes
+success for five, and the successes are indistinguishable from a genuine zero:** The helper zeroes
 the caller's `hal_param_t` on entry and then dispatches on the entry's `type` label:
 
 | Entry's `type` label | Result when `value` is absent |
@@ -236,7 +236,7 @@ emptiness where a value was required, because an empty string converted with `at
 `RdkGponManager` does not use this helper on its event path: its internal `get_event_param` splits the
 `publishEvent` message itself and returns failure when `name` or `value` is absent.
 
-**Date, time and encoding.** No parameter in either schema uses a date, time or duration datatype:
+**Date, time and encoding:** No parameter in either schema uses a date, time or duration datatype:
 the datatypes in use are `string`, `int`, `unsignedInt`, `unsignedLong` and, in the variant only,
 `boolean`, and the variant's `LastChange` is an elapsed-seconds `unsignedInt`.
 `Device.X_RDK_ONT.Ploam.SerialNumber` travels as an even-length hexadecimal string, constrained to
@@ -244,22 +244,22 @@ the datatypes in use are `string`, `int`, `unsignedInt`, `unsignedLong` and, in 
 `hexBinary` and `base64`, which no `GPON` parameter declares, so a message using one of those labels
 names a datatype this contract does not.
 
-**Numeric fidelity.** 46 of the 90 base parameters and 47 of the 95 variant parameters are
+**Numeric fidelity:** 46 of the 90 base parameters and 47 of the 95 variant parameters are
 `unsignedInt` or `unsignedLong`, and both datatypes cross the transport through signed accessors
 with no range check:
 
-- **Extraction.** `json_hal_get_param()` selects an arm by prefix-comparing the `type` label, so the
+- **Extraction:** `json_hal_get_param()` selects an arm by prefix-comparing the `type` label, so the
   arm follows the label rather than the `JSON` value. The `unsignedInt` arm reads with
   `json_object_get_int()` and formats with `"%d"`; the `unsignedLong` arm uses
   `json_object_get_int64()` and `"%ld"`. The resulting string is a signed rendering while
   `param->type` announces `PARAM_UNSIGNED_INTEGER` or `PARAM_UNSIGNED_LONG`, so a caller re-validates
   it as a decimal rather than trusting it as an unsigned value.
-- **Construction.** `json_hal_add_param()` converts with `atoi()` for `int`, `atol()` for `long` and
+- **Construction:** `json_hal_add_param()` converts with `atoi()` for `int`, `atol()` for `long` and
   `atoll()` **for both unsigned datatypes**, then wraps `unsignedInt` with `json_object_new_int()`, a
   32-bit signed container, and `unsignedLong` with `json_object_new_int64()`. None of the three
   conversions reports an error: a non-numeric string yields `0` and conversion stops silently at the
   first non-digit.
-- **Out-of-range numbers.** A `JSON` number outside the accessor's `int32_t` or `int64_t` range is
+- **Out-of-range numbers:** A `JSON` number outside the accessor's `int32_t` or `int64_t` range is
   converted by the linked `json-c`. The two revisions `json-hal-library` names — `json-c (0.11)` as
   the declared minimum and `json-c-0.15-20200726` as the revision its native build uses — clamp it to
   the nearest bound, and another build may differ, so no test asserts a particular converted value.
@@ -272,7 +272,7 @@ is the only definition in either file with a `maximum`, so 45 of the 46 unsigned
 47 in the variant) have no upper bound, and `PhysicalMedia.{i}.Bias.CurrentBias` also declares no
 `minimum`, so a negative value validates against it.
 
-**Unsupported actions.** `deleteObject` cannot be instantiated (`Contract Defects`, D0), so a caller
+**Unsupported actions:** `deleteObject` cannot be instantiated (`D1`), so a caller
 does not send it and a vendor need not implement it beyond parsing the enumeration member. The
 vocabulary has no `addObject` and no unsubscribe action: the vendor creates and destroys object
 instances, and a subscription cannot be withdrawn through this interface. The pinned server library
@@ -313,14 +313,14 @@ passes that path to `json_hal_client_init()`. Each of `config/gpon_manager_conf.
 `getParameters` entry naming an object path asks for that object's parameters in one round trip. The
 26 object definitions are identical in both files.
 
-**A prefix is addressable only if it satisfies an object definition's `name` constraint.** Five
+**A prefix is addressable only if it satisfies an object definition's `name` constraint:** Five
 definitions — the singleton segments `Gtc.`, `Omci.`, `Ploam.` and `TR69.`, plus
 `Ploam.RegistrationTimers.` — declare an exact `const`, so a request naming `Device.X_RDK_ONT.Gtc.`
 validates as it stands. The other 21, covering the instanced segments `PhysicalMedia`, `Gem` and
 `Veip` and their sub-objects, declare a `pattern` requiring an instance number, so the bare
 `Device.X_RDK_ONT.PhysicalMedia.` does **not** validate while `Device.X_RDK_ONT.PhysicalMedia.1.`
 does. `RdkGponManager` issues the bare form for all seven segments, so three of its seven bulk reads do
-not conform (`Contract Defects`, D5). In the table, `{i}` stands for the `\d+` the pattern requires,
+not conform (`D6`). In the table, `{i}` stands for the `\d+` the pattern requires,
 not for a literal a caller may send.
 
 | Object path | Definition key | `name` form | Addressable as a read prefix |
@@ -347,23 +347,28 @@ not for a literal a caller may send.
 | `Device.X_RDK_ONT.Ploam.RegistrationTimers.` | `ontPloamRegistrationTimersObj` | `const` | yes |
 | `Device.X_RDK_ONT.TR69.` | `ontTR69Obj` | `const` | yes |
 | `Device.X_RDK_ONT.Veip.{i}.` | `ontVeipObj` | `pattern` `^Device\.X_RDK_ONT\.Veip\.\d+\.$` | per instance only |
-| `Device.X_RDK_ONT.Veip.{i}.EthernetFlow.Egress.` | `ontVeipEthernetFlowEgressObj` | `pattern` `^Device\.X_RDK_ONT\.Veip\.\d+\.EthernetFlow\.Egress.$` | per instance only [D2] |
+| `Device.X_RDK_ONT.Veip.{i}.EthernetFlow.Egress.` | `ontVeipEthernetFlowEgressObj` | `pattern` `^Device\.X_RDK_ONT\.Veip\.\d+\.EthernetFlow\.Egress.$` | per instance only (`D3`) |
 | `Device.X_RDK_ONT.Veip.{i}.EthernetFlow.Egress.Q-VLAN.` | `ontVeipEthernetFlowEgressQVlanObj` | `pattern` `^Device\.X_RDK_ONT\.Veip\.\d+\.EthernetFlow\.Egress\.Q-VLAN\.$` | per instance only |
-| `Device.X_RDK_ONT.Veip.{i}.EthernetFlow.Ingress.` | `ontVeipEthernetFlowIngressObj` | `pattern` `^Device\.X_RDK_ONT\.Veip\.\d+\.EthernetFlow\.Ingress.$` | per instance only [D2] |
+| `Device.X_RDK_ONT.Veip.{i}.EthernetFlow.Ingress.` | `ontVeipEthernetFlowIngressObj` | `pattern` `^Device\.X_RDK_ONT\.Veip\.\d+\.EthernetFlow\.Ingress.$` | per instance only (`D3`) |
 | `Device.X_RDK_ONT.Veip.{i}.EthernetFlow.Ingress.Q-VLAN.` | `ontVeipEthernetFlowIngressQVlanObj` | `pattern` `^Device\.X_RDK_ONT\.Veip\.\d+\.EthernetFlow\.Ingress\.Q-VLAN\.$` | per instance only |
 
 ## Parameter Reference
 
 The 95 rows are the 90 definitions of `hal_schema/gpon_hal_schema.json` plus the 5 the `wan_unify`
-variant adds, sectioned by `TR-181` segment under `Device.X_RDK_ONT`. The first column gives the path
-from the definition's `name` and the schema definition key, separated by a middle dot (`·`), with
-`{i}` where the `name` pattern requires `\d+` and *wan_unify only* appended to the five
-variant-only definitions; `Type and Constraint` gives the `type` `const` that travels in the entry's
-`type` member, then the `value` constraint or the enumeration it references. `Access` is
-`Read-Write` for members of `setParameterSupportedList` and `Read-Only` otherwise — which agrees, in
-every definition of both files, with the `(Access = …)` marker that `Description` omits — plus
-`subscribable` for members of `subscribeEventSupportedList` and `optional read` where only
-`getParameterOptionalList` reaches the definition; `[D1]` and `[D2]` point into `Contract Defects`.
+variant adds, sectioned by `TR-181` segment under `Device.X_RDK_ONT`. Each table has four columns:
+
+- `TR-181 Parameter · definition key` — the path the definition's `name` binds, with `{i}` for each
+  `\d+` instance index, then ` · ` and the schema definition key; *wan_unify only* marks the five
+  definitions only the variant declares.
+- `Type and Constraint` — the `type.const` the entry's `type` member carries, then the `value`
+  constraint: `JSON` and the value's JSON type with its `minimum`, `maximum`, `maxLength`, `pattern`
+  or `one of` keywords, or `values from` and the enumeration it references. A cell that gives only the
+  JSON type has no further constraint.
+- `Access` — `Read-Write` for a definition in `setParameterSupportedList` or
+  `setParameterOptionalList`, `Read-Only` otherwise; `optional` marks a definition only the optional
+  list for that direction references, and `subscribable` a member of `subscribeEventSupportedList`.
+  In every definition of both files this agrees with the `(Access = …)` marker.
+- `Description` — the schema's `description` without its `(Access = …)` marker.
 
 Eight parameters are writable in the default schema and eleven in the variant, and 18 are
 subscribable. `getParameterOptionalList` lists 16 parameters and 8 objects; the three `TR69`
@@ -380,49 +385,49 @@ only one the `wan_unify` variant extends. The 14 `Alarm.` parameters use upperca
 sub-objects group the optical measurements: `RxPower.`, `TxPower.`, `Voltage.`, `Bias.`,
 `Temperature.` and `PerformanceThreshold.`, each listed in `Object Index`.
 
-| `TR-181` Parameter · definition key | Type and Constraint | Access | Description |
+| TR-181 Parameter · definition key | Type and Constraint | Access | Description |
 | --- | --- | --- | --- |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.DACT` · `ontPhysicalMediaAlarmDact` | `string`; `alarmEnumList` | Read-Only, subscribable | Deactivate ONU-ID |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.DIS` · `ontPhysicalMediaAlarmDis` | `string`; `alarmEnumList` | Read-Only, subscribable | Disabled ONU |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.LCDG` · `ontPhysicalMediaAlarmLcdg` | `string`; `alarmEnumList` | Read-Only, subscribable | Loss of GEM channel delineation, When GEM fragment delineation is lost according to clause 8.3.2 state machine |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.LOF` · `ontPhysicalMediaAlarmLof` | `string`; `alarmEnumList` | Read-Only, subscribable | Loss of frame |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.LOS` · `ontPhysicalMediaAlarmLos` | `string`; `alarmEnumList` | Read-Only, subscribable | Loss of signal |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.MEM` · `ontPhysicalMediaAlarmMem` | `string`; `alarmEnumList` | Read-Only, subscribable | Message error message, when ONU receives an unknown message |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.MIS` · `ontPhysicalMediaAlarmMis` | `string`; `alarmEnumList` | Read-Only, subscribable | Link mismatching |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.PEE` · `ontPhysicalMediaAlarmPee` | `string`; `alarmEnumList` | Read-Only, subscribable | Physical Equipment error |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.RDI` · `ontPhysicalMediaAlarmRdi` | `string`; `alarmEnumList` | Read-Only, subscribable | Remote defect indication |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.ROGUE` · `ontPhysicalMediaAlarmRogue` | `string`; `alarmEnumList` | Read-Only, subscribable | ROGUE ONU, The ONU transmitter is declared as ROGUE ONU |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.SD` · `ontPhysicalMediaAlarmSd` | `string`; `alarmEnumList` | Read-Only, subscribable | Signal failed, when BER value is beyond to the one configured at the ONU |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.SF` · `ontPhysicalMediaAlarmSf` | `string`; `alarmEnumList` | Read-Only, subscribable | Signal failed, when BER value is beyond to the one configured at the ONU |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.SUF` · `ontPhysicalMediaAlarmSuf` | `string`; `alarmEnumList` | Read-Only, subscribable | Start up failure, when the ranging of the ONU has failed |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.TF` · `ontPhysicalMediaAlarmTf` | `string`; `alarmEnumList` | Read-Only, subscribable | Transmitter failure, The ONU transmitter is declared in failure when there is no nominal backfacet photocurrent or when the drive currents go beyond the maximum specification |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alias` · `ontPhysicalMediaAlias` · *wan_unify only* | `string`; string, max length 64 | Read-Write | The alias, it shows a non-volatile unique key used to reference this instance. Alias provides a mechanism for a Controller to label this instance for future reference. |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.Bias.CurrentBias` · `ontPhysicalMediaCurrentBias` | `unsignedInt`; integer, otherwise unconstrained | Read-Only | The bias current measured at the optical module |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.Cage` · `ontPhysicalMediaCage` | `string`; string, one of `BoB`, `SFP` | Read-Only | Specifies the hardware layout for the optical device, bosa on board or external SFP |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.Connector` · `ontPhysicalMediaConnector` | `string`; string, no value constraint in effect [D1] | Read-Only | The kind of optical connector used in the optical module |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.Enable` · `ontPhysicalMediaEnable` · *wan_unify only* | `boolean`; boolean, otherwise unconstrained | Read-Write | The Enable, indicates whether the interface is enabled or disbled. |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.LastChange` · `ontPhysicalMediaLastChange` · *wan_unify only* | `unsignedInt`; integer, minimum 0 | Read-Only | The last change, it shows the accumulated time in seconds since the DSL line entered its current operational state. |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.LowerLayers` · `ontPhysicalMediaLowerLayers` · *wan_unify only* | `string`; string, max length 1024 | Read-Write | The lower layers, it shows comma-separated list (maximum list length 1024) of strings. |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.ModuleFirmwareVersion` · `ontPhysicalMediaModuleFirmwareVersion` | `string`; string, max length 256 | Read-Only | Informs about the firmware version of the optical module |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.ModuleName` · `ontPhysicalMediaModuleName` | `string`; string, max length 256 | Read-Only | Informs about the module name of the optical module |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.ModuleVendor` · `ontPhysicalMediaModuleVendor` | `string`; string, max length 256 | Read-Only | Informs about the vendor of the optical media |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.ModuleVersion` · `ontPhysicalMediaModuleVersion` | `string`; string, max length 256 | Read-Only | Informs about the hardware version of the optical module |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.NominalBitRateDownstream` · `ontPhysicalMediaNominalBitRateDownstream` | `unsignedInt`; integer, minimum 0 | Read-Only | The nominal bit rate for PonMode configured Downstream |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.NominalBitRateUpstream` · `ontPhysicalMediaNominalBitRateUpstream` | `unsignedInt`; integer, minimum 0 | Read-Only | The nominal bit rate for PonMode configured upstream |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.PerformanceThreshold.SignalDegrade` · `ontPhysicalMediaPerformanceThresholdSignalDegrade` | `unsignedInt`; integer, minimum 0 | Read-Only | This attribute specifies the downstream bit error rate (BER) threshold to detect the SD alarm, The SD threshold must be lower than the SF threshold |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.PerformanceThreshold.SignalFail` · `ontPhysicalMediaPerformanceThresholdSignalFail` | `unsignedInt`; integer, minimum 0 | Read-Only | This attribute specifies the downstream bit error rate (BER) threshold to detect the SF alarm |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.PonMode` · `ontPhysicalMediaPonMode` | `string`; string, no value constraint in effect [D1] | Read-Only | The passive optical network mode supported by the optical module and ONT |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.RedundancyState` · `ontPhysicalMediaRedundancyState` | `string`; `redundancyStateEnumList` | Read-Only | The redundancy state, it shows the current redundancy state of the optical interface at physical level |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.RxPower.SignalLevel` · `ontPhysicalMediaRxPowerSignalLevel` | `int`; integer, otherwise unconstrained | Read-Only | The optical level received at the optical module |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.RxPower.SignalLevelLowerThreshold` · `ontPhysicalMediaRxPowerSignalLevelLowerThreshold` | `int`; integer, otherwise unconstrained | Read-Write | The optical level threshold configured to generate a Low signal level alarm |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.RxPower.SignalLevelUpperThreshold` · `ontPhysicalMediaRxPowerSignalLevelUpperThreshold` | `int`; integer, otherwise unconstrained | Read-Write | The optical level threshold configured to generate an signal overload alarm |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.Status` · `ontPhysicalMediaStatus` | `string`; `statusEnumList` | Read-Only, subscribable | It shows the current operational status of the optical interface at physical level |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.Temperature.CurrentTemp` · `ontPhysicalMediaTemperatureCurrentTemp` | `int`; integer, otherwise unconstrained | Read-Only | The current temperature measured at the optical module |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.TxPower.SignalLevel` · `ontPhysicalMediaTxPowerSignalLevel` | `int`; integer, otherwise unconstrained | Read-Only | The optical level received at the optical module |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.TxPower.SignalLevelLowerThreshold` · `ontPhysicalMediaTxPowerSignalLevelLowerThreshold` | `int`; integer, otherwise unconstrained | Read-Write | The optical level threshold configured to generate a Low signal level alarm |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.TxPower.SignalLevelUpperThreshold` · `ontPhysicalMediaTxPowerSignalLevelUpperThreshold` | `int`; integer, otherwise unconstrained | Read-Write | The optical level threshold configured to generate an signal overload alarm |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.Upstream` · `ontPhysicalMediaUpstream` · *wan_unify only* | `boolean`; boolean, otherwise unconstrained | Read-Only | The Upstream, indicates whether the interface points towards the Internet (true) or towards End Devices (false). |
-| `Device.X_RDK_ONT.PhysicalMedia.{i}.Voltage.VoltageLevel` · `ontPhysicalMediaVoltageLevel` | `int`; integer, otherwise unconstrained | Read-Only | The voltage measured the optical module |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.DACT` · `ontPhysicalMediaAlarmDact` | `string`; values from `alarmEnumList` | Read-Only, subscribable | Deactivate ONU-ID |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.DIS` · `ontPhysicalMediaAlarmDis` | `string`; values from `alarmEnumList` | Read-Only, subscribable | Disabled ONU |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.LCDG` · `ontPhysicalMediaAlarmLcdg` | `string`; values from `alarmEnumList` | Read-Only, subscribable | Loss of GEM channel delineation, When GEM fragment delineation is lost according to clause 8.3.2 state machine |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.LOF` · `ontPhysicalMediaAlarmLof` | `string`; values from `alarmEnumList` | Read-Only, subscribable | Loss of frame |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.LOS` · `ontPhysicalMediaAlarmLos` | `string`; values from `alarmEnumList` | Read-Only, subscribable | Loss of signal |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.MEM` · `ontPhysicalMediaAlarmMem` | `string`; values from `alarmEnumList` | Read-Only, subscribable | Message error message, when ONU receives an unknown message |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.MIS` · `ontPhysicalMediaAlarmMis` | `string`; values from `alarmEnumList` | Read-Only, subscribable | Link mismatching |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.PEE` · `ontPhysicalMediaAlarmPee` | `string`; values from `alarmEnumList` | Read-Only, subscribable | Physical Equipment error |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.RDI` · `ontPhysicalMediaAlarmRdi` | `string`; values from `alarmEnumList` | Read-Only, subscribable | Remote defect indication |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.ROGUE` · `ontPhysicalMediaAlarmRogue` | `string`; values from `alarmEnumList` | Read-Only, subscribable | ROGUE ONU, The ONU transmitter is declared as ROGUE ONU |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.SD` · `ontPhysicalMediaAlarmSd` | `string`; values from `alarmEnumList` | Read-Only, subscribable | Signal failed, when BER value is beyond to the one configured at the ONU |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.SF` · `ontPhysicalMediaAlarmSf` | `string`; values from `alarmEnumList` | Read-Only, subscribable | Signal failed, when BER value is beyond to the one configured at the ONU |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.SUF` · `ontPhysicalMediaAlarmSuf` | `string`; values from `alarmEnumList` | Read-Only, subscribable | Start up failure, when the ranging of the ONU has failed |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm.TF` · `ontPhysicalMediaAlarmTf` | `string`; values from `alarmEnumList` | Read-Only, subscribable | Transmitter failure, The ONU transmitter is declared in failure when there is no nominal backfacet photocurrent or when the drive currents go beyond the maximum specification |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.Alias` · `ontPhysicalMediaAlias` · *wan_unify only* | `string`; JSON `string`; maxLength 64 | Read-Write | The alias, it shows a non-volatile unique key used to reference this instance. Alias provides a mechanism for a Controller to label this instance for future reference. |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.Bias.CurrentBias` · `ontPhysicalMediaCurrentBias` | `unsignedInt`; JSON `integer` | Read-Only | The bias current measured at the optical module |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.Cage` · `ontPhysicalMediaCage` | `string`; JSON `string`; one of `BoB`, `SFP` | Read-Only | Specifies the hardware layout for the optical device, bosa on board or external SFP |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.Connector` · `ontPhysicalMediaConnector` | `string`; JSON `string`; no value constraint in effect (`D2`) | Read-Only | The kind of optical connector used in the optical module |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.Enable` · `ontPhysicalMediaEnable` · *wan_unify only* | `boolean`; JSON `boolean` | Read-Write | The Enable, indicates whether the interface is enabled or disbled. |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.LastChange` · `ontPhysicalMediaLastChange` · *wan_unify only* | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only | The last change, it shows the accumulated time in seconds since the DSL line entered its current operational state. |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.LowerLayers` · `ontPhysicalMediaLowerLayers` · *wan_unify only* | `string`; JSON `string`; maxLength 1024 | Read-Write | The lower layers, it shows comma-separated list (maximum list length 1024) of strings. |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.ModuleFirmwareVersion` · `ontPhysicalMediaModuleFirmwareVersion` | `string`; JSON `string`; maxLength 256 | Read-Only | Informs about the firmware version of the optical module |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.ModuleName` · `ontPhysicalMediaModuleName` | `string`; JSON `string`; maxLength 256 | Read-Only | Informs about the module name of the optical module |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.ModuleVendor` · `ontPhysicalMediaModuleVendor` | `string`; JSON `string`; maxLength 256 | Read-Only | Informs about the vendor of the optical media |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.ModuleVersion` · `ontPhysicalMediaModuleVersion` | `string`; JSON `string`; maxLength 256 | Read-Only | Informs about the hardware version of the optical module |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.NominalBitRateDownstream` · `ontPhysicalMediaNominalBitRateDownstream` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only | The nominal bit rate for PonMode configured Downstream |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.NominalBitRateUpstream` · `ontPhysicalMediaNominalBitRateUpstream` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only | The nominal bit rate for PonMode configured upstream |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.PerformanceThreshold.SignalDegrade` · `ontPhysicalMediaPerformanceThresholdSignalDegrade` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only | This attribute specifies the downstream bit error rate (BER) threshold to detect the SD alarm, The SD threshold must be lower than the SF threshold |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.PerformanceThreshold.SignalFail` · `ontPhysicalMediaPerformanceThresholdSignalFail` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only | This attribute specifies the downstream bit error rate (BER) threshold to detect the SF alarm |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.PonMode` · `ontPhysicalMediaPonMode` | `string`; JSON `string`; no value constraint in effect (`D2`) | Read-Only | The passive optical network mode supported by the optical module and ONT |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.RedundancyState` · `ontPhysicalMediaRedundancyState` | `string`; values from `redundancyStateEnumList` | Read-Only | The redundancy state, it shows the current redundancy state of the optical interface at physical level |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.RxPower.SignalLevel` · `ontPhysicalMediaRxPowerSignalLevel` | `int`; JSON `integer` | Read-Only | The optical level received at the optical module |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.RxPower.SignalLevelLowerThreshold` · `ontPhysicalMediaRxPowerSignalLevelLowerThreshold` | `int`; JSON `integer` | Read-Write | The optical level threshold configured to generate a Low signal level alarm |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.RxPower.SignalLevelUpperThreshold` · `ontPhysicalMediaRxPowerSignalLevelUpperThreshold` | `int`; JSON `integer` | Read-Write | The optical level threshold configured to generate an signal overload alarm |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.Status` · `ontPhysicalMediaStatus` | `string`; values from `statusEnumList` | Read-Only, subscribable | It shows the current operational status of the optical interface at physical level |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.Temperature.CurrentTemp` · `ontPhysicalMediaTemperatureCurrentTemp` | `int`; JSON `integer` | Read-Only | The current temperature measured at the optical module |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.TxPower.SignalLevel` · `ontPhysicalMediaTxPowerSignalLevel` | `int`; JSON `integer` | Read-Only | The optical level received at the optical module |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.TxPower.SignalLevelLowerThreshold` · `ontPhysicalMediaTxPowerSignalLevelLowerThreshold` | `int`; JSON `integer` | Read-Write | The optical level threshold configured to generate a Low signal level alarm |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.TxPower.SignalLevelUpperThreshold` · `ontPhysicalMediaTxPowerSignalLevelUpperThreshold` | `int`; JSON `integer` | Read-Write | The optical level threshold configured to generate an signal overload alarm |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.Upstream` · `ontPhysicalMediaUpstream` · *wan_unify only* | `boolean`; JSON `boolean` | Read-Only | The Upstream, indicates whether the interface points towards the Internet (true) or towards End Devices (false). |
+| `Device.X_RDK_ONT.PhysicalMedia.{i}.Voltage.VoltageLevel` · `ontPhysicalMediaVoltageLevel` | `int`; JSON `integer` | Read-Only | The voltage measured the optical module |
 
 ### Gem
 
@@ -432,48 +437,48 @@ including `C-VLAN` and `S-VLAN` tag handling. Fourteen of the eighteen are reach
 the contract; the four reachable through `getParameterSupportedList` are `PortId`, `ReceivedFrames`,
 `TransmittedFrames` and `TrafficType`. Nothing in this segment is writable or subscribable.
 
-| `TR-181` Parameter · definition key | Type and Constraint | Access | Description |
+| TR-181 Parameter · definition key | Type and Constraint | Access | Description |
 | --- | --- | --- | --- |
-| `Device.X_RDK_ONT.Gem.{i}.EthernetFlow.Egress.C-VLAN.Dei` · `ontGemEthernetFlowEgressCVlanDei` | `unsignedInt`; integer, minimum 0 | Read-Only, optional read | Drop Eligible Indicator |
-| `Device.X_RDK_ONT.Gem.{i}.EthernetFlow.Egress.C-VLAN.Pcp` · `ontGemEthernetFlowEgressCVlanPcp` | `unsignedInt`; integer, minimum 0 | Read-Only, optional read | Priority Code Point |
-| `Device.X_RDK_ONT.Gem.{i}.EthernetFlow.Egress.C-VLAN.Vid` · `ontGemEthernetFlowEgressCVlanVid` | `unsignedInt`; integer, minimum 0 | Read-Only, optional read | VLAN ID |
-| `Device.X_RDK_ONT.Gem.{i}.EthernetFlow.Egress.S-VLAN.Dei` · `ontGemEthernetFlowEgressSVlanDei` | `unsignedInt`; integer, minimum 0 | Read-Only, optional read | Drop Eligible Indicator |
-| `Device.X_RDK_ONT.Gem.{i}.EthernetFlow.Egress.S-VLAN.Pcp` · `ontGemEthernetFlowEgressSVlanPcp` | `unsignedInt`; integer, minimum 0 | Read-Only, optional read | Priority Code Point |
-| `Device.X_RDK_ONT.Gem.{i}.EthernetFlow.Egress.S-VLAN.Vid` · `ontGemEthernetFlowEgressSVlanVid` | `unsignedInt`; integer, minimum 0 | Read-Only, optional read | VLAN ID |
-| `Device.X_RDK_ONT.Gem.{i}.EthernetFlow.Egress.Tagged` · `ontGemEthernetFlowEgressTagged` | `string`; string, one of `Single`, `Double` | Read-Only, optional read | Informs the network traffic configuration |
-| `Device.X_RDK_ONT.Gem.{i}.EthernetFlow.Ingress.C-VLAN.Dei` · `ontGemEthernetFlowIngressCVlanDei` | `unsignedInt`; integer, minimum 0 | Read-Only, optional read | Drop Eligible Indicator |
-| `Device.X_RDK_ONT.Gem.{i}.EthernetFlow.Ingress.C-VLAN.Pcp` · `ontGemEthernetFlowIngressCVlanPcp` | `unsignedInt`; integer, minimum 0 | Read-Only, optional read | Priority Code Point |
-| `Device.X_RDK_ONT.Gem.{i}.EthernetFlow.Ingress.C-VLAN.Vid` · `ontGemEthernetFlowIngressCVlanVid` | `unsignedInt`; integer, minimum 0 | Read-Only, optional read | VLAN ID |
-| `Device.X_RDK_ONT.Gem.{i}.EthernetFlow.Ingress.S-VLAN.Dei` · `ontGemEthernetFlowIngressSVlanDei` | `unsignedInt`; integer, minimum 0 | Read-Only, optional read | Drop Eligible Indicator |
-| `Device.X_RDK_ONT.Gem.{i}.EthernetFlow.Ingress.S-VLAN.Pcp` · `ontGemEthernetFlowIngressSVlanPcp` | `unsignedInt`; integer, minimum 0 | Read-Only, optional read | Priority Code Point |
-| `Device.X_RDK_ONT.Gem.{i}.EthernetFlow.Ingress.S-VLAN.Vid` · `ontGemEthernetFlowIngressSVlanVid` | `unsignedInt`; integer, minimum 0 | Read-Only, optional read | VLAN ID |
-| `Device.X_RDK_ONT.Gem.{i}.EthernetFlow.Ingress.Tagged` · `ontGemEthernetFlowIngressTagged` | `string`; string, one of `Single`, `Double` | Read-Only, optional read | Informs the network traffic configuration |
-| `Device.X_RDK_ONT.Gem.{i}.PortId` · `ontGemPortId` | `unsignedInt`; integer, minimum 0 | Read-Only | The identification of the Gem port |
-| `Device.X_RDK_ONT.Gem.{i}.ReceivedFrames` · `ontGemReceivedFrames` | `unsignedLong`; integer, minimum 0 | Read-Only | Number of frames received by this port |
-| `Device.X_RDK_ONT.Gem.{i}.TrafficType` · `ontGemTrafficType` | `string`; string, one of `Unidirectional`, `Bidirectional` | Read-Only | The kind of traffic associated to this port based on what kind of GEM port |
-| `Device.X_RDK_ONT.Gem.{i}.TransmittedFrames` · `ontGemTransmittedFrames` | `unsignedLong`; integer, minimum 0 | Read-Only | Number of frames transmitted by this port |
+| `Device.X_RDK_ONT.Gem.{i}.EthernetFlow.Egress.C-VLAN.Dei` · `ontGemEthernetFlowEgressCVlanDei` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only, optional | Drop Eligible Indicator |
+| `Device.X_RDK_ONT.Gem.{i}.EthernetFlow.Egress.C-VLAN.Pcp` · `ontGemEthernetFlowEgressCVlanPcp` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only, optional | Priority Code Point |
+| `Device.X_RDK_ONT.Gem.{i}.EthernetFlow.Egress.C-VLAN.Vid` · `ontGemEthernetFlowEgressCVlanVid` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only, optional | VLAN ID |
+| `Device.X_RDK_ONT.Gem.{i}.EthernetFlow.Egress.S-VLAN.Dei` · `ontGemEthernetFlowEgressSVlanDei` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only, optional | Drop Eligible Indicator |
+| `Device.X_RDK_ONT.Gem.{i}.EthernetFlow.Egress.S-VLAN.Pcp` · `ontGemEthernetFlowEgressSVlanPcp` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only, optional | Priority Code Point |
+| `Device.X_RDK_ONT.Gem.{i}.EthernetFlow.Egress.S-VLAN.Vid` · `ontGemEthernetFlowEgressSVlanVid` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only, optional | VLAN ID |
+| `Device.X_RDK_ONT.Gem.{i}.EthernetFlow.Egress.Tagged` · `ontGemEthernetFlowEgressTagged` | `string`; JSON `string`; one of `Single`, `Double` | Read-Only, optional | Informs the network traffic configuration |
+| `Device.X_RDK_ONT.Gem.{i}.EthernetFlow.Ingress.C-VLAN.Dei` · `ontGemEthernetFlowIngressCVlanDei` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only, optional | Drop Eligible Indicator |
+| `Device.X_RDK_ONT.Gem.{i}.EthernetFlow.Ingress.C-VLAN.Pcp` · `ontGemEthernetFlowIngressCVlanPcp` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only, optional | Priority Code Point |
+| `Device.X_RDK_ONT.Gem.{i}.EthernetFlow.Ingress.C-VLAN.Vid` · `ontGemEthernetFlowIngressCVlanVid` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only, optional | VLAN ID |
+| `Device.X_RDK_ONT.Gem.{i}.EthernetFlow.Ingress.S-VLAN.Dei` · `ontGemEthernetFlowIngressSVlanDei` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only, optional | Drop Eligible Indicator |
+| `Device.X_RDK_ONT.Gem.{i}.EthernetFlow.Ingress.S-VLAN.Pcp` · `ontGemEthernetFlowIngressSVlanPcp` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only, optional | Priority Code Point |
+| `Device.X_RDK_ONT.Gem.{i}.EthernetFlow.Ingress.S-VLAN.Vid` · `ontGemEthernetFlowIngressSVlanVid` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only, optional | VLAN ID |
+| `Device.X_RDK_ONT.Gem.{i}.EthernetFlow.Ingress.Tagged` · `ontGemEthernetFlowIngressTagged` | `string`; JSON `string`; one of `Single`, `Double` | Read-Only, optional | Informs the network traffic configuration |
+| `Device.X_RDK_ONT.Gem.{i}.PortId` · `ontGemPortId` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only | The identification of the Gem port |
+| `Device.X_RDK_ONT.Gem.{i}.ReceivedFrames` · `ontGemReceivedFrames` | `unsignedLong`; JSON `integer`; minimum 0 | Read-Only | Number of frames received by this port |
+| `Device.X_RDK_ONT.Gem.{i}.TrafficType` · `ontGemTrafficType` | `string`; JSON `string`; one of `Unidirectional`, `Bidirectional` | Read-Only | The kind of traffic associated to this port based on what kind of GEM port |
+| `Device.X_RDK_ONT.Gem.{i}.TransmittedFrames` · `ontGemTransmittedFrames` | `unsignedLong`; JSON `integer`; minimum 0 | Read-Only | Number of frames transmitted by this port |
 
 ### Veip
 
 `Device.X_RDK_ONT.Veip.{i}.` — 13 parameter definitions. The Virtual Ethernet Interface Point and
 its `Q-VLAN` Ethernet flows. Four of the eight writable parameters in the default schema live here.
-Four definitions in this segment carry a malformed `name` pattern; see `Contract Defects`.
+Four definitions in this segment carry a malformed `name` pattern; see `D3`.
 
-| `TR-181` Parameter · definition key | Type and Constraint | Access | Description |
+| TR-181 Parameter · definition key | Type and Constraint | Access | Description |
 | --- | --- | --- | --- |
-| `Device.X_RDK_ONT.Veip.{i}.AdministrativeState` · `ontVeipAdministrativeState` | `string`; `lockEnumList` | Read-Only, subscribable | Informs the current administrative state of Veip interface from OMCI domain |
-| `Device.X_RDK_ONT.Veip.{i}.EthernetFlow.Egress.Q-VLAN.Dei` · `ontVeipEthernetFlowEgressQVlanDei` | `unsignedInt`; integer, minimum 0 | Read-Only | Drop Eligible Indicator |
-| `Device.X_RDK_ONT.Veip.{i}.EthernetFlow.Egress.Q-VLAN.Pcp` · `ontVeipEthernetFlowEgressQVlanPcp` | `unsignedInt`; integer, minimum 0 | Read-Only | Priority Code Poin |
-| `Device.X_RDK_ONT.Veip.{i}.EthernetFlow.Egress.Q-VLAN.Vid` · `ontVeipEthernetFlowEgressQVlanVid` | `unsignedInt`; integer, minimum 0 | Read-Write | VLAN ID |
-| `Device.X_RDK_ONT.Veip.{i}.EthernetFlow.Egress.Tagged` · `ontVeipEthernetFlowEgressTagged` | `string`; string, one of `Untagged`, `Single`, `Double` | Read-Write | Informs the network traffic configuration [D2] |
-| `Device.X_RDK_ONT.Veip.{i}.EthernetFlow.Ingress.Q-VLAN.Dei` · `ontVeipEthernetFlowIngressQVlanDei` | `unsignedInt`; integer, minimum 0 | Read-Only | Drop Eligible Indicator |
-| `Device.X_RDK_ONT.Veip.{i}.EthernetFlow.Ingress.Q-VLAN.Pcp` · `ontVeipEthernetFlowIngressQVlanPcp` | `unsignedInt`; integer, minimum 0 | Read-Only | Priority Code Point |
-| `Device.X_RDK_ONT.Veip.{i}.EthernetFlow.Ingress.Q-VLAN.Vid` · `ontVeipEthernetFlowIngressQVlanVid` | `unsignedInt`; integer, minimum 0 | Read-Write | VLAN ID |
-| `Device.X_RDK_ONT.Veip.{i}.EthernetFlow.Ingress.Tagged` · `ontVeipEthernetFlowIngressTagged` | `string`; string, one of `Untagged`, `Single`, `Double` | Read-Write | Informs the network traffic configuration [D2] |
-| `Device.X_RDK_ONT.Veip.{i}.InterDomainName` · `ontVeipInterDomainName` | `string`; string, max length 25 | Read-Only | This attribute is a character string that provides an optional way to identify the VEIP to a non-OMCI management domain, and expose the default provider brigde configuration. |
-| `Device.X_RDK_ONT.Veip.{i}.InterfaceName` · `ontVeipInterfaceName` | `string`; string, max length 256 | Read-Only | Informs about interface name used on top of the Veip to terminate vlan traffic |
-| `Device.X_RDK_ONT.Veip.{i}.MeId` · `ontVeipMeId` | `unsignedInt`; integer, minimum 0 | Read-Only | Identifier of the VEIP ME |
-| `Device.X_RDK_ONT.Veip.{i}.OperationalState` · `ontVeipOperationalState` | `string`; string, one of `Up`, `Down`, `Unknown`, `Dormant`, `NotPresent`, `LowerLayerDown`, `Error` | Read-Only, subscribable | Informs the current operational state of Veip interface from OMCI domain |
+| `Device.X_RDK_ONT.Veip.{i}.AdministrativeState` · `ontVeipAdministrativeState` | `string`; values from `lockEnumList` | Read-Only, subscribable | Informs the current administrative state of Veip interface from OMCI domain |
+| `Device.X_RDK_ONT.Veip.{i}.EthernetFlow.Egress.Q-VLAN.Dei` · `ontVeipEthernetFlowEgressQVlanDei` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only | Drop Eligible Indicator |
+| `Device.X_RDK_ONT.Veip.{i}.EthernetFlow.Egress.Q-VLAN.Pcp` · `ontVeipEthernetFlowEgressQVlanPcp` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only | Priority Code Poin |
+| `Device.X_RDK_ONT.Veip.{i}.EthernetFlow.Egress.Q-VLAN.Vid` · `ontVeipEthernetFlowEgressQVlanVid` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Write | VLAN ID |
+| `Device.X_RDK_ONT.Veip.{i}.EthernetFlow.Egress.Tagged` · `ontVeipEthernetFlowEgressTagged` | `string`; JSON `string`; one of `Untagged`, `Single`, `Double` | Read-Write | Informs the network traffic configuration (`D3`) |
+| `Device.X_RDK_ONT.Veip.{i}.EthernetFlow.Ingress.Q-VLAN.Dei` · `ontVeipEthernetFlowIngressQVlanDei` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only | Drop Eligible Indicator |
+| `Device.X_RDK_ONT.Veip.{i}.EthernetFlow.Ingress.Q-VLAN.Pcp` · `ontVeipEthernetFlowIngressQVlanPcp` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only | Priority Code Point |
+| `Device.X_RDK_ONT.Veip.{i}.EthernetFlow.Ingress.Q-VLAN.Vid` · `ontVeipEthernetFlowIngressQVlanVid` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Write | VLAN ID |
+| `Device.X_RDK_ONT.Veip.{i}.EthernetFlow.Ingress.Tagged` · `ontVeipEthernetFlowIngressTagged` | `string`; JSON `string`; one of `Untagged`, `Single`, `Double` | Read-Write | Informs the network traffic configuration (`D3`) |
+| `Device.X_RDK_ONT.Veip.{i}.InterDomainName` · `ontVeipInterDomainName` | `string`; JSON `string`; maxLength 25 | Read-Only | This attribute is a character string that provides an optional way to identify the VEIP to a non-OMCI management domain, and expose the default provider brigde configuration. |
+| `Device.X_RDK_ONT.Veip.{i}.InterfaceName` · `ontVeipInterfaceName` | `string`; JSON `string`; maxLength 256 | Read-Only | Informs about interface name used on top of the Veip to terminate vlan traffic |
+| `Device.X_RDK_ONT.Veip.{i}.MeId` · `ontVeipMeId` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only | Identifier of the VEIP ME |
+| `Device.X_RDK_ONT.Veip.{i}.OperationalState` · `ontVeipOperationalState` | `string`; JSON `string`; one of `Up`, `Down`, `Unknown`, `Dormant`, `NotPresent`, `LowerLayerDown`, `Error` | Read-Only, subscribable | Informs the current operational state of Veip interface from OMCI domain |
 
 ### Ploam
 
@@ -481,18 +486,18 @@ Four definitions in this segment carry a malformed `name` pattern; see `Contract
 registration timers and the `PLOAM` message counters. `Ploam` is a singleton, so every path here is
 an exact `const` with no instance number, and the whole segment is addressable as a read prefix.
 
-| `TR-181` Parameter · definition key | Type and Constraint | Access | Description |
+| TR-181 Parameter · definition key | Type and Constraint | Access | Description |
 | --- | --- | --- | --- |
-| `Device.X_RDK_ONT.Ploam.ActivationCounter` · `ontPloamActivationCounter` | `unsignedInt`; integer, minimum 0 | Read-Only | The number of times the ONU pass through O5 between reboots |
-| `Device.X_RDK_ONT.Ploam.MicErrors` · `ontPloamMicErrors` | `unsignedInt`; integer, minimum 0 | Read-Only | The number of packets with MIC errors |
-| `Device.X_RDK_ONT.Ploam.OnuId` · `ontPloamOnuId` | `unsignedInt`; integer, 0 to 1022 | Read-Only | The vendor id of the ONU the same as the 4 most significant bytes of the ONU serial number |
-| `Device.X_RDK_ONT.Ploam.RegistrationState` · `ontPloamRegistrationState` | `string`; string, one of `O1`, `O2`, `O3`, `O4`, `O5`, `O6`, `O7`, `O8`, `O9` | Read-Only, subscribable | The registration state of ONT |
-| `Device.X_RDK_ONT.Ploam.RegistrationTimers.TO1` · `ontPloamRegistrationTimersTO1` | `unsignedInt`; integer, minimum 0 | Read-Only | Ranging timer |
-| `Device.X_RDK_ONT.Ploam.RegistrationTimers.TO2` · `ontPloamRegistrationTimersTO2` | `unsignedInt`; integer, minimum 0 | Read-Only | Loss of downstream synchronization |
-| `Device.X_RDK_ONT.Ploam.RxMessageCount` · `ontPloamRxMessageCount` | `unsignedInt`; integer, minimum 0 | Read-Only | The number of PLOAM messages received |
-| `Device.X_RDK_ONT.Ploam.SerialNumber` · `ontPloamSerialNumber` | `string`; string, pattern `^([a-fA-F0-9]{2})+$`, max length 128 | Read-Only | ONU serial number as defined in the TC layer |
-| `Device.X_RDK_ONT.Ploam.TxMessageCount` · `ontPloamTxMessageCount` | `unsignedInt`; integer, minimum 0 | Read-Only | The number of PLOAM messages transmitted |
-| `Device.X_RDK_ONT.Ploam.VendorId` · `ontPloamVendorId` | `string`; string, otherwise unconstrained | Read-Only | The vendor id of the ONU the same as the 4 most significant bytes |
+| `Device.X_RDK_ONT.Ploam.ActivationCounter` · `ontPloamActivationCounter` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only | The number of times the ONU pass through O5 between reboots |
+| `Device.X_RDK_ONT.Ploam.MicErrors` · `ontPloamMicErrors` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only | The number of packets with MIC errors |
+| `Device.X_RDK_ONT.Ploam.OnuId` · `ontPloamOnuId` | `unsignedInt`; JSON `integer`; minimum 0; maximum 1022 | Read-Only | The vendor id of the ONU the same as the 4 most significant bytes of the ONU serial number |
+| `Device.X_RDK_ONT.Ploam.RegistrationState` · `ontPloamRegistrationState` | `string`; JSON `string`; one of `O1`, `O2`, `O3`, `O4`, `O5`, `O6`, `O7`, `O8`, `O9` | Read-Only, subscribable | The registration state of ONT |
+| `Device.X_RDK_ONT.Ploam.RegistrationTimers.TO1` · `ontPloamRegistrationTimersTO1` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only | Ranging timer |
+| `Device.X_RDK_ONT.Ploam.RegistrationTimers.TO2` · `ontPloamRegistrationTimersTO2` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only | Loss of downstream synchronization |
+| `Device.X_RDK_ONT.Ploam.RxMessageCount` · `ontPloamRxMessageCount` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only | The number of PLOAM messages received |
+| `Device.X_RDK_ONT.Ploam.SerialNumber` · `ontPloamSerialNumber` | `string`; JSON `string`; maxLength 128; pattern `^([a-fA-F0-9]{2})+$` | Read-Only | ONU serial number as defined in the TC layer |
+| `Device.X_RDK_ONT.Ploam.TxMessageCount` · `ontPloamTxMessageCount` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only | The number of PLOAM messages transmitted |
+| `Device.X_RDK_ONT.Ploam.VendorId` · `ontPloamVendorId` | `string`; JSON `string` | Read-Only | The vendor id of the ONU the same as the 4 most significant bytes |
 
 ### Gtc
 
@@ -500,39 +505,39 @@ an exact `const` with no instance number, and the whole segment is addressable a
 and uncorrected counts. A singleton, addressable as a read prefix. Nothing in this segment is
 writable or subscribable.
 
-| `TR-181` Parameter · definition key | Type and Constraint | Access | Description |
+| TR-181 Parameter · definition key | Type and Constraint | Access | Description |
 | --- | --- | --- | --- |
-| `Device.X_RDK_ONT.Gtc.CorrectedFecBytes` · `ontGtcCorrectedFecBytes` | `unsignedLong`; integer, minimum 0 | Read-Only | Count of FEC codewords that contained errors but were corrected by the FEC function. Reference: ITU-T G.988, Clause 9.2.9 and 9.2.22 |
-| `Device.X_RDK_ONT.Gtc.CorrectedFecCodeWords` · `ontGtcCorrectedFecCodeWords` | `unsignedLong`; integer, minimum 0 | Read-Only | Count of FEC codewords that contained errors but were corrected by the FEC function. Reference: ITU-T G.988, Clause 9.2.9 and 9.2.2 |
-| `Device.X_RDK_ONT.Gtc.FrameHecErrors` · `ontGtcFrameHecErrors` | `unsignedLong`; integer, minimum 0 | Read-Only | The number of instances of an XGEM frame HEC error. (Reference: 'Count of XGEM frame header HEC errors' in Table C.14.1 of ITU-T G.9807,ITU-T G.988, Clause 9.2.15 and 9.2.23) |
-| `Device.X_RDK_ONT.Gtc.FramesLost` · `ontGtcFramesLost` | `unsignedLong`; integer, minimum 0 | Read-Only | The number of 4 byte words lost because of an XGEM frame HEC error. Reference: ITU-T G.988, Clause 9.2.15 and 9.2.23 |
-| `Device.X_RDK_ONT.Gtc.HecErrorCount` · `ontGtcHecErrorCount` | `unsignedLong`; integer, minimum 0 | Read-Only | The number of FEC words included into a physical burst payload. (Reference: 'FS HEC error count' defined in Table C.14.1 of ITU-T G.9807) |
-| `Device.X_RDK_ONT.Gtc.PSBdHecErrors` · `ontGtcPSBdHecErrors` | `unsignedLong`; integer, minimum 0 | Read-Only | This attribute counts HEC errors in any of the fields of the downstream physical sync block (Reference: 'PSBd HEC error count' defined in Table C.14.1 of ITU-T G.9807,ITU-T G.988, Clause 9.2.15 and 9.2.23) |
-| `Device.X_RDK_ONT.Gtc.TotalFecCodeWords` · `ontGtcGtcTotalFecCodeWords` | `unsignedLong`; integer, minimum 0 | Read-Only | Count of total received code words. Reference: ITU-T G.988, Clause 9.2.9 and 9.2.22 |
-| `Device.X_RDK_ONT.Gtc.UnCorrectedFecCodeWords` · `ontGtcUnCorrectedFecCodeWords` | `unsignedLong`; integer, minimum 0 | Read-Only | Count of FEC codewords that contained errors and could not be corrected by the FEC function. Reference: ITU-T G.988, Clause 9.2.9 and 9.2.22 |
+| `Device.X_RDK_ONT.Gtc.CorrectedFecBytes` · `ontGtcCorrectedFecBytes` | `unsignedLong`; JSON `integer`; minimum 0 | Read-Only | Count of FEC codewords that contained errors but were corrected by the FEC function. Reference: ITU-T G.988, Clause 9.2.9 and 9.2.22 |
+| `Device.X_RDK_ONT.Gtc.CorrectedFecCodeWords` · `ontGtcCorrectedFecCodeWords` | `unsignedLong`; JSON `integer`; minimum 0 | Read-Only | Count of FEC codewords that contained errors but were corrected by the FEC function. Reference: ITU-T G.988, Clause 9.2.9 and 9.2.2 |
+| `Device.X_RDK_ONT.Gtc.FrameHecErrors` · `ontGtcFrameHecErrors` | `unsignedLong`; JSON `integer`; minimum 0 | Read-Only | The number of instances of an XGEM frame HEC error. (Reference: 'Count of XGEM frame header HEC errors' in Table C.14.1 of ITU-T G.9807,ITU-T G.988, Clause 9.2.15 and 9.2.23) |
+| `Device.X_RDK_ONT.Gtc.FramesLost` · `ontGtcFramesLost` | `unsignedLong`; JSON `integer`; minimum 0 | Read-Only | The number of 4 byte words lost because of an XGEM frame HEC error. Reference: ITU-T G.988, Clause 9.2.15 and 9.2.23 |
+| `Device.X_RDK_ONT.Gtc.HecErrorCount` · `ontGtcHecErrorCount` | `unsignedLong`; JSON `integer`; minimum 0 | Read-Only | The number of FEC words included into a physical burst payload. (Reference: 'FS HEC error count' defined in Table C.14.1 of ITU-T G.9807) |
+| `Device.X_RDK_ONT.Gtc.PSBdHecErrors` · `ontGtcPSBdHecErrors` | `unsignedLong`; JSON `integer`; minimum 0 | Read-Only | This attribute counts HEC errors in any of the fields of the downstream physical sync block (Reference: 'PSBd HEC error count' defined in Table C.14.1 of ITU-T G.9807,ITU-T G.988, Clause 9.2.15 and 9.2.23) |
+| `Device.X_RDK_ONT.Gtc.TotalFecCodeWords` · `ontGtcGtcTotalFecCodeWords` | `unsignedLong`; JSON `integer`; minimum 0 | Read-Only | Count of total received code words. Reference: ITU-T G.988, Clause 9.2.9 and 9.2.22 |
+| `Device.X_RDK_ONT.Gtc.UnCorrectedFecCodeWords` · `ontGtcUnCorrectedFecCodeWords` | `unsignedLong`; JSON `integer`; minimum 0 | Read-Only | Count of FEC codewords that contained errors and could not be corrected by the FEC function. Reference: ITU-T G.988, Clause 9.2.9 and 9.2.22 |
 
 ### Omci
 
 `Device.X_RDK_ONT.Omci.` — 3 parameter definitions. `OMCI` message counts and the `MIC` error count.
 A singleton, addressable as a read prefix. Nothing in this segment is writable or subscribable.
 
-| `TR-181` Parameter · definition key | Type and Constraint | Access | Description |
+| TR-181 Parameter · definition key | Type and Constraint | Access | Description |
 | --- | --- | --- | --- |
-| `Device.X_RDK_ONT.Omci.MicErrors` · `ontOmciMicErrors` | `unsignedInt`; integer, minimum 0 | Read-Only | Count of MIC errors |
-| `Device.X_RDK_ONT.Omci.RxBaseLineMessageCountValid` · `ontOmciRxBaseLineMessageCountValid` | `unsignedInt`; integer, minimum 0 | Read-Only | Count of OMCI messages |
-| `Device.X_RDK_ONT.Omci.RxExtendedMessageCountValid` · `ontOmciRxExtendedMessageCountValid` | `unsignedInt`; integer, minimum 0 | Read-Only | Count of OMCI messages |
+| `Device.X_RDK_ONT.Omci.MicErrors` · `ontOmciMicErrors` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only | Count of MIC errors |
+| `Device.X_RDK_ONT.Omci.RxBaseLineMessageCountValid` · `ontOmciRxBaseLineMessageCountValid` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only | Count of OMCI messages |
+| `Device.X_RDK_ONT.Omci.RxExtendedMessageCountValid` · `ontOmciRxExtendedMessageCountValid` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only | Count of OMCI messages |
 
 ### TR69
 
 `Device.X_RDK_ONT.TR69.` — 2 parameter definitions. The `ACS` address and the tag carried from the
 `OMCI` domain into the `TR-069` domain. A singleton, addressable as a read prefix, and listed in both
 `getParameterSupportedList` and `getParameterOptionalList`. `url` is the one parameter definition in
-either file that omits `additionalProperties: false`; see `Contract Defects`.
+either file that omits `additionalProperties: false`; see `D4`.
 
-| `TR-181` Parameter · definition key | Type and Constraint | Access | Description |
+| TR-181 Parameter · definition key | Type and Constraint | Access | Description |
 | --- | --- | --- | --- |
-| `Device.X_RDK_ONT.TR69.AssociatedTag` · `ontTR69AssociatedTag` | `unsignedInt`; integer, minimum 0 | Read-Only | Tag to transfer information from OMCI domain to TR69 domain |
-| `Device.X_RDK_ONT.TR69.url` · `ontTR69url` | `string`; string, otherwise unconstrained | Read-Only | ACS URI to be used by DNS client to resolve to an IP address |
+| `Device.X_RDK_ONT.TR69.AssociatedTag` · `ontTR69AssociatedTag` | `unsignedInt`; JSON `integer`; minimum 0 | Read-Only | Tag to transfer information from OMCI domain to TR69 domain |
+| `Device.X_RDK_ONT.TR69.url` · `ontTR69url` | `string`; JSON `string` | Read-Only | ACS URI to be used by DNS client to resolve to an IP address |
 
 ## Enumeration Appendix
 
@@ -550,11 +555,11 @@ only the members, so a member list may be read from the table directly.
 | `alarmEnumList` | `Active`, `Inactive` | none | Referenced by all 14 `PhysicalMedia.{i}.Alarm.` parameters — the most-used enumeration in the contract |
 | `lockEnumList` | `Lock`, `Unlock` | none | Referenced once, by `Veip.{i}.AdministrativeState` |
 | `redundancyStateEnumList` | `Active`, `Standby` | none | Referenced once, by `PhysicalMedia.{i}.RedundancyState` |
-| `ponModeEnumList` | `GPON`, `XG-PON`, `NG-PON2`, `XGS-PON` | none | **Declared but never enforced.** Its single reference is nested under a non-keyword `value` key; see `Contract Defects` |
-| `physicalConnectorEnumList` | `LC`, `ST`, `FC`, `SC`, `MT-RJ` | none | **Declared but never enforced.** Its single reference is nested under a non-keyword `value` key; see `Contract Defects` |
+| `ponModeEnumList` | `GPON`, `XG-PON`, `NG-PON2`, `XGS-PON` | none | **Declared but never enforced:** Its single reference is nested under a non-keyword `value` key; see `D2` |
+| `physicalConnectorEnumList` | `LC`, `ST`, `FC`, `SC`, `MT-RJ` | none | **Declared but never enforced:** Its single reference is nested under a non-keyword `value` key; see `D2` |
 
 **Eight further parameters carry an inline `enum` rather than a reference to a named
-enumeration.** They are the same in both files, shown in six rows because two pairs of parameters
+enumeration:** They are the same in both files, shown in six rows because two pairs of parameters
 share a value set:
 
 | Parameter | Members | Note |
@@ -566,15 +571,15 @@ share a value set:
 | `Veip.{i}.EthernetFlow.Ingress.Tagged`, `Veip.{i}.EthernetFlow.Egress.Tagged` | `Untagged`, `Single`, `Double` | Two parameters, one value set |
 | `Veip.{i}.OperationalState` | `Up`, `Down`, `Unknown`, `Dormant`, `NotPresent`, `LowerLayerDown`, `Error` | Subscribable. The same seven members `statusEnumList` declares, restated inline rather than referenced |
 
-**25 of the 90 parameters are constrained to a closed value set**: the 17 whose `value` references a
+**25 of the 90 parameters are constrained to a closed value set:** the 17 whose `value` references a
 named enumeration effectively — 14 alarms plus `PhysicalMedia.{i}.Status`,
 `PhysicalMedia.{i}.RedundancyState` and `Veip.{i}.AdministrativeState` — and the 8 above.
 `PhysicalMedia.{i}.PonMode` and `PhysicalMedia.{i}.Connector`, whose reference is inert, are not
-among them (`Contract Defects`, D1).
+among them (`D2`).
 
 ## Worked Message Examples
 
-**Five workflows cover ten of the eleven actions.** `deleteObject` cannot be instantiated, so no
+**Five workflows cover ten of the eleven actions:** `deleteObject` cannot be instantiated, so no
 delete message is published. Every `JSON` block below validates against the schema the text beside
 it names. The `reqId` values follow the form the client emits (`Transport and Protocol`); a real
 exchange carries whatever value the counter has reached.
@@ -604,8 +609,8 @@ sequenceDiagram
 paths, each carrying its datatype label and its value. The request below reads the `Gtc` singleton
 prefix, which is addressable because `ontGtcObj` declares an exact `const`.
 
-**Request** — `RdkGponManager` to the vendor JSON HAL server, valid against both
-`hal_schema/gpon_hal_schema.json` and `hal_schema/gpon_wan_unify_hal_schema.json`:
+**Request:** `RdkGponManager` to the vendor JSON HAL server, valid against both
+`hal_schema/gpon_hal_schema.json` and `hal_schema/gpon_wan_unify_hal_schema.json`.
 
 ```json
 {
@@ -622,7 +627,7 @@ prefix, which is addressable because `ontGtcObj` declares an exact `const`.
 The response repeats each leaf under that prefix with its `type` and `value`. Two of the eight `Gtc`
 parameters are shown; a real reply carries every parameter the vendor implements under the prefix.
 
-**Response** — vendor JSON HAL server to `RdkGponManager`:
+**Response:** the vendor JSON HAL server to `RdkGponManager`.
 
 ```json
 {
@@ -637,7 +642,7 @@ parameters are shown; a real reply carries every parameter the vendor implements
 }
 ```
 
-**Reading the entries.** A caller walks the array with `json_hal_get_total_param_count()` and
+**Reading the entries:** A caller walks the array with `json_hal_get_total_param_count()` and
 `json_hal_get_param()`, which **copies** each entry into a caller-supplied `hal_param_t` —
 `char name[256]; char value[2048]; eParamType type;` — so the extracted value is caller-owned
 storage that outlives `json_object_put()`; only a pointer taken directly with
@@ -654,8 +659,8 @@ label checked exactly compares it against the parameter's `type` `const` from `P
 which `ontPhysicalMediaObjName` does not match because it requires an instance number. The conforming
 form addresses the instance.
 
-**Request** — `RdkGponManager` to the vendor JSON HAL server, the corrected form of the shipped
-fixture, valid against both files:
+**Request:** `RdkGponManager` to the vendor JSON HAL server, the corrected form of the shipped
+fixture, valid against both files.
 
 ```json
 {
@@ -675,7 +680,7 @@ A write carries `name`, `type` and `value`, and the entry must satisfy `setParam
 It is acknowledged by `result`, **not** by a response action named after the request. The example
 writes an optical alarm threshold, one of the eight writable parameters in the default schema.
 
-**Request** — `RdkGponManager` to the vendor JSON HAL server, valid against both files:
+**Request:** `RdkGponManager` to the vendor JSON HAL server, valid against both files.
 
 ```json
 {
@@ -695,7 +700,7 @@ writes an optical alarm threshold, one of the eight writable parameters in the d
 
 The acknowledgement is the canonical `result` message, which also answers `subscribeEvent`.
 
-**Acknowledgement** — vendor JSON HAL server to `RdkGponManager`:
+**Response:** the vendor JSON HAL server to `RdkGponManager`.
 
 ```json
 {
@@ -709,15 +714,15 @@ The acknowledgement is the canonical `result` message, which also answers `subsc
 }
 ```
 
-**A `wan_unify`-only write.** `hal_schema/example_setParameters_msg.json` writes
+**A `wan_unify`-only write:** `hal_schema/example_setParameters_msg.json` writes
 `Device.X_RDK_ONT.PhysicalMedia.1.Enable` with `type` `boolean`. That parameter exists only in
 `hal_schema/gpon_wan_unify_hal_schema.json`, so the fixture is invalid against the default schema and
 valid, unchanged, against the variant; a build that has not defined `WAN_MANAGER_UNIFICATION_ENABLED`
 does not send it. The block reproduces the file byte for byte, including its irregular whitespace;
 the file itself has no final newline.
 
-**Request** — `RdkGponManager` to the vendor JSON HAL server, `wan_unify` variant only, the shipped
-bytes:
+**Request:** `RdkGponManager` to the vendor JSON HAL server, `wan_unify` variant only, the shipped
+bytes.
 
 ```json
 {
@@ -739,7 +744,7 @@ bytes:
 schema path from its configuration — and its value is that it reveals a mismatch between the two
 sides.
 
-**Request** — `RdkGponManager` to the vendor JSON HAL server, valid against both files:
+**Request:** `RdkGponManager` to the vendor JSON HAL server, valid against both files.
 
 ```json
 {
@@ -755,7 +760,7 @@ sides.
 configuration names. A default-build server returns the path `config/gpon_manager_conf.json` names,
 as below; a `wan_unify` server returns `/etc/rdk/schemas/gpon_wan_unify_hal_schema.json`.
 
-**Response** — vendor JSON HAL server to `RdkGponManager`, the corrected form of the shipped fixture:
+**Response:** the vendor JSON HAL server to `RdkGponManager`, the corrected form of the shipped fixture.
 
 ```json
 {
@@ -789,7 +794,7 @@ sequenceDiagram
     Cli-->>Mgr: callback(event_buf, len) on the library socket thread
 ```
 
-**Request** — `RdkGponManager` to the vendor JSON HAL server, valid against both files:
+**Request:** `RdkGponManager` to the vendor JSON HAL server, valid against both files.
 
 ```json
 {
@@ -809,7 +814,7 @@ sequenceDiagram
 The event the vendor then publishes carries all three of `name`, `type` and `value`, so a receiver
 does not have to look the datatype up.
 
-**Unsolicited event** — vendor JSON HAL server to `RdkGponManager`:
+**Event:** the vendor JSON HAL server to `RdkGponManager`, unsolicited.
 
 ```json
 {
@@ -836,7 +841,7 @@ a form that fails validation (`Event Model`).
 four-field envelope, and both also validate with the empty `params` array the client's header helper
 attaches.
 
-**Request** — `RdkGponManager` to the vendor JSON HAL server:
+**Request:** `RdkGponManager` to the vendor JSON HAL server.
 
 ```json
 {
@@ -847,7 +852,7 @@ attaches.
 }
 ```
 
-**Response** — vendor JSON HAL server to `RdkGponManager`:
+**Response:** the vendor JSON HAL server to `RdkGponManager`.
 
 ```json
 {
@@ -863,22 +868,22 @@ list of subscriptions, and the transport provides no client helper for either ac
 therefore tracks its own subscriptions, and a vendor and a caller that need this exchange to carry
 content agree on its representation outside this contract.
 
-### Object deletion is not available
+### Delete an object instance
 
 `deleteObject` is a member of the `action` enumeration, but its payload definition is
 `{"anyOf": [], "required": ["name"]}` in both files, so no valid message exists and none is
-published. A caller does not send it (`Contract Defects`, D0).
+published. A caller does not send it (`D1`).
 
-### Disposition of the shipped example files
+### The shipped fixtures
 
 Eight `hal_schema/example_*_msg.json` files ship beside the schemas. They are left unmodified, so
 every correction exists only in this document.
 
 | File | Schema verdict | Disposition here |
 | --- | --- | --- |
-| `example_getParameters_msg.json` | **Invalid against both.** Names the bare prefix `Device.X_RDK_ONT.PhysicalMedia.`, which `ontPhysicalMediaObjName` does not match | Corrected form published under `Read parameters` |
+| `example_getParameters_msg.json` | **Invalid against both:** Names the bare prefix `Device.X_RDK_ONT.PhysicalMedia.`, which `ontPhysicalMediaObjName` does not match | Corrected form published under `Read parameters` |
 | `example_setParameters_msg.json` | Invalid against the base schema, **valid unchanged against the variant**, which adds `PhysicalMedia.{i}.Enable` | Published as its shipped bytes under `Write parameters`, with the variant named |
-| `example_getSchemaResponse_msg.json` | Valid against both, and **semantically wrong**: returns `/etc/rdk/hal_schemas/xtm_hal_schema.json` | Corrected path published under `Retrieve the server's schema location` |
+| `example_getSchemaResponse_msg.json` | Valid against both, and **semantically wrong:** returns `/etc/rdk/hal_schemas/xtm_hal_schema.json` | Corrected path published under `Retrieve the server's schema location` |
 | `example_getSchema_msg.json` | Valid against both | Needs no correction; the worked exchange above is authored |
 | `example_getParametersResponse_msg.json` | Valid against both | Needs no correction; the worked exchange above is authored |
 | `example_subscribeEvent_msg.json` | Valid against both | Needs no correction; the worked exchange above is authored |
@@ -900,13 +905,13 @@ branch, an inert subschema or a missing `additionalProperties` shows only under 
 or a definition-level walk — so a vendor can pass every test built from the shipped fixtures and
 still be affected by all seven.
 
-### D0 — deleteObject and setParameterOptionalList carry an empty anyOf
+### D1 — deleteObject and setParameterOptionalList carry an empty anyOf
 
 `definitions.deleteObject` is `{"anyOf": [], "required": ["name"]}` and
 `definitions.setParameterOptionalList` is `{"description": "...", "anyOf": []}`, in **both** files.
 An empty `anyOf` matches no instance, because at least one branch must match and there are none.
 
-So **the `deleteObject` action is uninstantiable**: no schema-valid delete message exists, and object deletion
+So **the `deleteObject` action is uninstantiable:** no schema-valid delete message exists, and object deletion
 is unavailable through this interface whatever a vendor implements. And because `setParameters`
 binds its entries to `setParameterSupportedList` **or** `setParameterOptionalList`, and the second
 branch never matches, the writable surface is exactly `setParameterSupportedList` — 8 parameters in
@@ -915,11 +920,11 @@ the default schema and 11 in the variant.
 The same two arrays are why both files fail `Draft7Validator.check_schema`, which requires a schema
 array to be non-empty; each file fails in exactly these two places.
 
-**What a test should do.** Exclude `deleteObject` from action coverage rather than record it as a
+**What a test should do:** Exclude `deleteObject` from action coverage rather than record it as a
 failing case, treat `setParameterOptionalList` as empty by construction, and in a meta-schema check
 expect exactly two failures per file and fail on a third.
 
-### D1 — two enumerations are declared and never enforced
+### D2 — two enumerations are declared and never enforced
 
 `definitions.ontPhysicalMediaPonMode` and `definitions.ontPhysicalMediaConnector` constrain their
 `value` as `{"type": "string", "value": {"$ref": "#/definitions/ponModeEnumList"}}` and the
@@ -931,11 +936,11 @@ are the only references to `ponModeEnumList` and `physicalConnectorEnumList`, so
 `GPON`, `XG-PON`, `NG-PON2`, `XGS-PON` and `LC`, `ST`, `FC`, `SC`, `MT-RJ` — constrain nothing
 anywhere in the contract.
 
-**What a test should do.** Treat the two enumerations as documentation of intent. A test that a
+**What a test should do:** Treat the two enumerations as documentation of intent. A test that a
 server rejects an out-of-list `PonMode` asserts behaviour the schema does not require; a test that a
 server reports only listed values is a vendor conformance test and is labelled as one.
 
-### D2 — four name patterns contain an unescaped .
+### D3 — four name patterns contain an unescaped .
 
 `ontVeipEthernetFlowIngressObj` and `ontVeipEthernetFlowEgressObj` declare
 `^Device\.X_RDK_ONT\.Veip\.\d+\.EthernetFlow\.Ingress.$` and the `Egress` equivalent;
@@ -945,18 +950,18 @@ after `Ingress` or `Egress` is not escaped, so it matches any character:
 `Device.X_RDK_ONT.Veip.1.EthernetFlow.EgressX` matches the object pattern and
 `Device.X_RDK_ONT.Veip.1.EthernetFlow.EgressZTagged` matches the parameter pattern.
 
-**This defect has a write consequence.** Both `Tagged` definitions are members of
+**This defect has a write consequence:** Both `Tagged` definitions are members of
 `setParameterSupportedList`, so a `setParameters` message naming `EgressZTagged` validates, and a
 strictly validating vendor server would accept a write to a path that does not exist in the data
 model. The intended paths — `Device.X_RDK_ONT.Veip.{i}.EthernetFlow.Ingress.` and `.Egress.` for the
 objects, `...Ingress.Tagged` and `...Egress.Tagged` for the parameters — are what the
 `Parameter Reference` and `Object Index` rows show.
 
-**What a test should do.** Send only the intended paths. A negative test that a near-miss path is
+**What a test should do:** Send only the intended paths. A negative test that a near-miss path is
 rejected fails against a conforming implementation for these four definitions, so it is excluded
 with a reference to this defect rather than recorded as a vendor fault.
 
-### D3 — one parameter definition omits additionalProperties: false
+### D4 — one parameter definition omits additionalProperties: false
 
 `definitions.ontTR69url` declares `name`, `type` and `value` and does not forbid other members; it is
 the only one of the 90 base definitions, and of the 95 variant definitions, to omit
@@ -965,16 +970,16 @@ arbitrary extra members and still validate. The relaxation is limited to unknown
 definition still binds `type` to a `const` and constrains `value` by type, so a `null` value and a
 wrong `type` label are rejected as on any closed leaf.
 
-**What a test should do.** Do not use `TR69.url` as the subject of a negative test for unknown-member
+**What a test should do:** Do not use `TR69.url` as the subject of a negative test for unknown-member
 rejection; it remains a valid subject for a negative test on `value` type or on the `type` label.
 
-### D4 — 25 of the 26 object definitions omit additionalProperties: false
+### D5 — 25 of the 26 object definitions omit additionalProperties: false
 
 Only `ontPhysicalMediaAlarmObj` forbids extra members. The other 25 declare `name` alone, so an entry
 naming an object prefix may carry arbitrary extra members undetected — and the effect reaches further
-than D3, in both directions.
+than `D4`, in both directions.
 
-**In a response, an object-prefix entry is effectively unvalidated.** The 25 definitions declare no
+**In a response, an object-prefix entry is effectively unvalidated:** The 25 definitions declare no
 `type` and no `value`, while `getParametersResponse` requires both at the action level, so an entry
 naming an object prefix satisfies the contract with two members whose content nothing constrains.
 `{"name": "Device.X_RDK_ONT.PhysicalMedia.1.", "type": "unsignedLong", "value": null, "extra": 1}`
@@ -983,19 +988,19 @@ the closed leaf `Device.X_RDK_ONT.Gtc.CorrectedFecBytes` fails on the unknown me
 `null` value together. A response carrying object prefixes cannot be told from a malformed one by
 schema validation alone.
 
-**The one closed object cannot appear in a response.** `ontPhysicalMediaAlarmObj` forbids every
+**The one closed object cannot appear in a response:** `ontPhysicalMediaAlarmObj` forbids every
 member but `name`, while `getParametersResponse`, `setParameters` and `publishEvent` require `type`
 and `value`. So `{"name": "Device.X_RDK_ONT.PhysicalMedia.1.Alarm."}` validates under
 `getParameters`, while
 `{"name": "Device.X_RDK_ONT.PhysicalMedia.1.Alarm.", "type": "unsignedLong", "value": 1}` fails under
 `getParametersResponse`: a server asked for that prefix answers with the leaf parameters beneath it.
 
-**What a test should do.** Run unknown-member, `value` and `type`-label negative tests on a leaf
+**What a test should do:** Run unknown-member, `value` and `type`-label negative tests on a leaf
 other than `TR69.url`, never on an object-prefix entry. Do not assert that a vendor server rejects a
 malformed object-prefix response, and do not construct a `getParametersResponse` naming the `Alarm.`
 prefix.
 
-### D5 — the three instanced segments are not addressable by their bare prefix
+### D6 — the three instanced segments are not addressable by their bare prefix
 
 This is a defect of fit between the schema and `RdkGponManager` rather than inside the schema.
 `ontPhysicalMediaObjName`, `ontGemObj` and `ontVeipObj` require an instance number, so
@@ -1004,11 +1009,11 @@ validate as read targets, yet `RdkGponManager` issues exactly those three bare p
 bulk reads, and `example_getParameters_msg.json` uses the same non-conforming form. The four
 singleton prefixes declare exact `const` values and validate.
 
-**What a test should do.** Address instanced segments per instance. A vendor server that also accepts
+**What a test should do:** Address instanced segments per instance. A vendor server that also accepts
 the bare prefix implements an extension to the shipped contract and says so; a test requires neither
 that extension nor its rejection, since `RdkGponManager` depends on it in practice.
 
-### D6 — one variant-only description names the wrong access technology
+### D7 — one variant-only description names the wrong access technology
 
 `ontPhysicalMediaLastChange`, one of the five definitions the `wan_unify` variant adds, describes
 itself as "the accumulated time in seconds since the DSL line entered its current operational
@@ -1018,7 +1023,7 @@ is the only one of the 185 descriptions in the two files that names a foreign ac
 `Parameter Reference` row quotes it verbatim; a test reads the parameter as the `PhysicalMedia`
 instance's elapsed time in its current state.
 
-### Transport delivery guarantees the pinned library does not provide
+### Transport delivery limits of json-hal-library
 
 Six properties of `json-hal-library` at the pinned revision limit what a caller and a vendor server
 may assume about delivery. Items 1, 2, 5 and 6 apply to `RdkGponManager` as a client; items 3 and 4
@@ -1051,7 +1056,7 @@ copied; `Event Model` states the callback-side obligation.
 
 ## Error Handling
 
-**A caller distinguishes two failure classes.** A **transport failure** is a send-and-reply call that
+**A caller distinguishes two failure classes:** A **transport failure** is a send-and-reply call that
 returns an error: the request may never have been processed, and the reply out-parameter is left
 untouched, because `client_send_and_get_reply`, the `static` helper behind both send entry points,
 assigns it only after a completed wait with a non-negative result. A caller therefore initialises the
@@ -1060,7 +1065,7 @@ other than `RETURN_OK`. An **application failure** is a completed exchange whose
 status other than `Success`: the request reached the server and the server answered. Only the second
 establishes that the request was received, which decides whether repeating it is the same operation.
 
-**Every error travels in a reply.** There is no error action, error event or out-of-band error
+**Every error travels in a reply:** There is no error action, error event or out-of-band error
 channel. An unanswered request costs the caller its full wait — 10 seconds on the untimed
 `json_hal_client_send_and_get_reply()` — and ends as a transport failure, so a server answers every
 request it receives, including one it cannot satisfy.
@@ -1080,7 +1085,7 @@ nothing else: no diagnostic text, no error code and no per-entry outcome. `Inval
 A test asserts on the token and on a subsequent `getParameters`, not on a cause or an effect inferred
 from the token.
 
-**Reading the status requires the raw field; the transport's helper reports only whether it is `Success`.**
+**Reading the status requires the raw field; the transport's helper reports only whether it is `Success`:**
 `json_hal_get_result_status()` compares `Status` with
 `strncmp(result, JSON_RPC_STATUS_SUCCESS, strlen(JSON_RPC_STATUS_SUCCESS))` and reports through a
 `json_bool`, so it:
@@ -1099,22 +1104,39 @@ literals. The library defines `JSON_RPC_STATUS_SUCCESS`, `JSON_RPC_STATUS_FAILED
 name is spelled `JSON_RPC_FILED_RESULT`. `RdkGponManager`'s set path relies on the helper's `Success`
 test, while the subscribe helper reads no status at all (`Event Model`).
 
+### Blocking and timeouts
+
+Both send-and-reply calls count their wait in ticks, not wall-clock time. A tick is one pass of the
+client receive loop, which waits up to 250 ms (`LOOP_TIMEOUT`) for data and ends early when data
+arrives. The default budget, `SEND_MSG_TICKER_TIMEOUT`, is 40 ticks, about 10 s while the connection
+is idle.
+
+| Call | Tick budget |
+| --- | --- |
+| `json_hal_client_send_and_get_reply` | The default 40 ticks, about 10 s while idle. `RdkGponManager` uses this form for every request. |
+| `json_hal_client_send_and_get_reply_with_timeout` | The requested seconds converted to ticks and clamped to between 40 and 480 ticks, about 10 s to 120 s while idle. The return value does not report a clamp. |
+
+Traffic on the connection shortens the wall-clock time a budget takes, and a lost connection
+lengthens it, because each reconnect attempt is a one-second pass. While a full read sits in the
+reassembly buffer, pending requests are not aged, so a wait can outlast its budget
+(`Message boundaries`). A caller that needs a hard deadline enforces it outside this interface.
+
 ## Event Model
 
-**One subscription mechanism, two message flows.** A caller subscribes with `subscribeEvent`, the
+**One subscription mechanism, two message flows:** A caller subscribes with `subscribeEvent`, the
 server acknowledges with `result`, and thereafter the server sends `publishEvent` unsolicited
 whenever the subscribed parameter meets the notification condition.
 
-**A callback runs on the `json_hal_client` receive thread, with the library's event lock held.** That
+**A callback runs on the `json_hal_client` receive thread, with the library's event lock held:** That
 thread takes `gm_event_tracking_lock`, walks the subscription list, invokes each matching callback
 **inside** the walk, and releases the lock when the walk completes. A callback therefore:
 
-- **does not block and does not issue a synchronous `HAL` request.** The receive thread is the only
+- **does not block and does not issue a synchronous `HAL` request:** The receive thread is the only
   one reading the socket, so while a callback runs no reply and no further event is delivered, and a
   request issued from inside the callback waits for an answer only the blocked thread could receive.
-- **does not re-enter the event `API`.** A callback that subscribes, or otherwise takes
+- **does not re-enter the event `API`:** A callback that subscribes, or otherwise takes
   `gm_event_tracking_lock`, self-deadlocks.
-- **validates, copies and hands off.** It receives the raw message and its length, checks the
+- **validates, copies and hands off:** It receives the raw message and its length, checks the
   message, bounds-checks and copies what it needs into its own storage (`Fixed-size buffers on the
   receive path` under `Contract Defects`), and returns, leaving further work to its own thread.
 
@@ -1137,7 +1159,7 @@ a valid `subscribeEvent` (below).
 | Registration (1) | `ontPloamRegistrationState` |
 | `VEIP` state (2) | `ontVeipAdministrativeState`, `ontVeipOperationalState` |
 
-**The `notificationType` field takes `interval` or `onChange`, defaulting to `onChange`.** The transport defines
+**The `notificationType` field takes `interval` or `onChange`, defaulting to `onChange`:** The transport defines
 two more, `JSON_RPC_FIELD_PARAM_NOTIFICATION_TYPE_ON_CHANGE_SYNC` (`onChangeSync`) and
 `…_ON_CHANGE_SYNC_TIMEOUT` (`onChangeSyncTimeout`), with their server-side handling, behind its
 `JSON_BLOCKING_SUBSCRIBE_EVENT` compile guard. Neither is in either `GPON` schema, so a subscription
@@ -1147,7 +1169,7 @@ vendor implementing this contract. `RdkGponManager` subscribes with `onChange`.
 ### Only two of the eighteen event parameters can actually be subscribed
 
 **Sixteen of the eighteen members of `subscribeEventSupportedList` cannot appear in any schema-valid
-`subscribeEvent` message.** `definitions.subscribeEvent` sets `required: ["name", "notificationType"]`,
+`subscribeEvent` message:** `definitions.subscribeEvent` sets `required: ["name", "notificationType"]`,
 and every one of the eighteen member definitions sets `additionalProperties: false`, so an entry may
 carry only the members its own definition declares. Just two of them declare `notificationType`:
 
@@ -1171,14 +1193,14 @@ The publish row is what makes this a contract defect rather than a narrower even
 server may publish `Device.X_RDK_ONT.PhysicalMedia.1.Alarm.LOS` with `value` `Active` in a valid
 message, although no caller can lawfully have subscribed to it.
 
-**What this means for a caller and a test.** Treat the subscribable surface as two parameters, not
+**What this means for a caller and a test:** Treat the subscribable surface as two parameters, not
 eighteen. A subscription request for any of the other sixteen is a schema violation that a conforming
 server may reject, and a test expects that rejection rather than recording it as a vendor defect. A
 test validating inbound events accepts all eighteen. Because the subscribe helper discards the
 server's status, a client requesting one of the sixteen sees `RETURN_OK` and then never receives an
 event, which nothing distinguishes from a working subscription on a parameter that has not changed.
 
-**Three of `RdkGponManager`'s own five subscriptions fall in that gap.** At startup it subscribes with
+**Three of `RdkGponManager`'s own five subscriptions fall in that gap:** At startup it subscribes with
 `onChange` to `Device.X_RDK_ONT.PhysicalMedia.{i}.Status` and
 `Device.X_RDK_ONT.Veip.{i}.AdministrativeState`, which validate, and to
 `Device.X_RDK_ONT.PhysicalMedia.{i}.Alarm`, `Device.X_RDK_ONT.Veip.{i}.OperationalState` and
@@ -1189,7 +1211,7 @@ two definitions do not declare `notificationType`.
 ### The publish helper is incompatible with this contract
 
 **A vendor server that publishes through `json_hal_server_publish_event()` emits an event that fails
-validation against both schemas.** The message is built by the server library's internal
+validation against both schemas:** The message is built by the server library's internal
 `create_publish_event_msg`, reachable only through that public function, and it diverges from the
 schema in two places, each fatal to validation on its own:
 
@@ -1198,7 +1220,7 @@ schema in two places, each fatal to validation on its own:
 | `reqId` as a `string` matching `^[0-9]+$` | the value of the `static` counter `get_sequence_number` wrapped by `json_object_new_int()` — a `JSON` **number** |
 | Each `publishEvent` entry to carry `name`, `type` **and** `value` | `name` and `value` only, with no `type` |
 
-**What an implementer does.** A vendor constructs the `publishEvent` message directly, with `reqId`
+**What an implementer does:** A vendor constructs the `publishEvent` message directly, with `reqId`
 as a numeric **string** and all three entry members populated, in the form shown under
 `Worked Message Examples`. A receiving caller expects that some vendor servers use the helper and
 therefore send an integer `reqId` and no `type`; it decides deliberately whether to reject or
@@ -1207,7 +1229,7 @@ definition, because the datatype is not on the wire.
 
 ### Subscription identity is prefix matching, not equality
 
-**A published name that is a prefix of a subscribed path matches it.** Both sides compare with
+**A published name that is a prefix of a subscribed path matches it:** Both sides compare with
 `strncmp(subscribed, published, strlen(published))`, taking the length from the **published** name:
 
 - the server, choosing which subscribers receive an event, evaluates
@@ -1229,11 +1251,11 @@ socket and the callback checks the name for equality or the event against the sc
 1. **Compare the event name for exact equality** with the path the callback was registered for, and
    discard the event otherwise.
 2. **Validate the inbound event against the schema the configuration names before the value is
-   used** — the envelope's four fields, the action, and the entry's `name`, `type` and `value`
+   used:** the envelope's four fields, the action, and the entry's `name`, `type` and `value`
    against the definition the name resolves to. No layer beneath the callback does this: the client
    initialises no validator, and the server's optional validator checks only its own replies.
 
-**A reconnection does not restore subscriptions.** There is no unsubscribe action, so a subscription
+**A reconnection does not restore subscriptions:** There is no unsubscribe action, so a subscription
 cannot be withdrawn through this interface. The client's socket reconnects automatically and
 indefinitely — a clean disconnect returns its receive state machine to `SOCKET_INIT`, which recreates
 the socket and advances to `SOCKET_CONNECT`, and a failed `connect()` retries after `sleep(1)` with no
@@ -1268,8 +1290,6 @@ the first symptom is events that never arrive.
 
 ## Source References
 
-GPON manager repository:
-
 - [rdkcentral/gpon-manager/hal_schema/gpon_hal_schema.json](https://github.com/rdkcentral/gpon-manager/blob/main/hal_schema/gpon_hal_schema.json) — default-build schema: envelope, actions, parameter, object and enumeration definitions
 - [rdkcentral/gpon-manager/hal_schema/gpon_wan_unify_hal_schema.json](https://github.com/rdkcentral/gpon-manager/blob/main/hal_schema/gpon_wan_unify_hal_schema.json) — `WAN_MANAGER_UNIFICATION_ENABLED` schema variant
 - [rdkcentral/gpon-manager/hal_schema/example_getParameters_msg.json](https://github.com/rdkcentral/gpon-manager/blob/main/hal_schema/example_getParameters_msg.json) — shipped fixture, corrected under `Read parameters`
@@ -1286,9 +1306,6 @@ GPON manager repository:
 - [rdkcentral/gpon-manager/source/TR-181/middle_layer_src/gponmgr_dml_hal.h](https://github.com/rdkcentral/gpon-manager/blob/main/source/TR-181/middle_layer_src/gponmgr_dml_hal.h) — `SET_PARAMETER_METHOD`, notification type and event-name prefixes
 - [rdkcentral/gpon-manager/source/TR-181/middle_layer_src/gponmgr_dml_data.h](https://github.com/rdkcentral/gpon-manager/blob/main/source/TR-181/middle_layer_src/gponmgr_dml_data.h) — `GponMgrDml_GetData_locked`
 - [rdkcentral/gpon-manager/source/GponManager/gponmgr_controller.c](https://github.com/rdkcentral/gpon-manager/blob/main/source/GponManager/gponmgr_controller.c) — the event subscriptions issued at startup
-
-`json-hal-library` transport, at commit `86a0a300b976f8e3295064af8fb3fd1c793c9e64`:
-
 - [rdkcentral/json-hal-library/json_hal_client.h](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/json_hal_client.h) — client entry points
 - [rdkcentral/json-hal-library/json_hal_client.c](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/json_hal_client.c) — request header, `reqId`, reply correlation, status helper, subscription and event dispatch
 - [rdkcentral/json-hal-library/json_hal_server.h](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/json_hal_server.h) — server entry points
@@ -1298,6 +1315,7 @@ GPON manager repository:
 - [rdkcentral/json-hal-library/json-rpc-common/json_rpc_common.h](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/json-rpc-common/json_rpc_common.h) — wire field, action, status and datatype macros; buffer sizes
 - [rdkcentral/json-hal-library/json-schema-validator-wrapper/json_schema_validator_wrapper.h](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/json-schema-validator-wrapper/json_schema_validator_wrapper.h) — optional server-side reply validator
 - [rdkcentral/json-hal-library/tcp_client.c](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/tcp_client.c) — client socket, reassembly and reconnection
+- [rdkcentral/json-hal-library/tcp_client.h](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/tcp_client.h) — receive-loop period
 - [rdkcentral/json-hal-library/tcp_server.c](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/tcp_server.c) — server socket, accept and send loop
 - [rdkcentral/json-hal-library/README.md](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/README.md) — declared `json-c` minimum
 - [rdkcentral/json-hal-library/cov_docker_script/component_config.json](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/cov_docker_script/component_config.json) — `json-c` revision of the native build

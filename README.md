@@ -31,18 +31,10 @@ the specification.
 ## Architecture
 
 ```mermaid
-graph LR
-    subgraph "RDK-B middleware"
-        RdkGponManager["RdkGponManager"]
-        JsonHalClient["json_hal_client"]
-    end
-    JSONHALSocket["JSON HAL socket (TCP 127.0.0.1:40100)"]
-    subgraph "Vendor software"
-        VendorServer["Vendor JSON HAL Server"]
-    end
-    RdkGponManager <--> JsonHalClient
-    JsonHalClient <--> JSONHALSocket
-    JSONHALSocket <--> VendorServer
+flowchart TD
+    Mgr["RdkGponManager"] <--> Cli["json_hal_client"]
+    Cli <--> Socket["JSON HAL socket (TCP port 40100)"]
+    Socket <--> Srv["Vendor JSON HAL Server"]
 ```
 
 `RdkGponManager` is the **client** of the interface, through the `json_hal_client` library, and the
@@ -54,7 +46,7 @@ of RDK-B and this interface. The loopback address is fixed by the transport, whi
 
 ## JSON HAL contract
 
-**Module identity.** Messages carry the module name `gponhal` and the schema version `0.0.1`, both
+**Module Identity:** Messages carry the module name `gponhal` and the schema version `0.0.1`, both
 fixed as constants in both shipped schemas [`definitions.moduleName.const`,
 `definitions.schemaVersion.const`], and the client reads both from the schema file it loads
 [[`json_hal_load_config`](https://github.com/rdkcentral/json-hal-library/blob/86a0a300b976f8e3295064af8fb3fd1c793c9e64/json_hal_common.c)].
@@ -63,18 +55,25 @@ supported version, so the client and the vendor server must agree on it. The sch
 independently of the repository release tags recorded in [`CHANGELOG.md`](CHANGELOG.md), the most
 recent of which is `v1.7.0`.
 
-**Object tree.** Every parameter sits under the `TR-181` vendor extension `Device.X_RDK_ONT`, across
+**Object Tree:** Every parameter sits under the `TR-181` vendor extension `Device.X_RDK_ONT`, across
 seven segments — `PhysicalMedia` (36 parameters), `Gem` (18), `Veip` (13), `Ploam` (10), `Gtc` (8),
 `Omci` (3) and `TR69` (2), for a total of 90 in `hal_schema/gpon_hal_schema.json`. The manager
 addresses each segment through a `GPON_QUERY_*` definition
 [`source/TR-181/middle_layer_src/gponmgr_dml_hal.c`], and
-[`docs/pages/halSpecDetailed.md`](docs/pages/halSpecDetailed.md) documents each parameter within them.
+[`docs/pages/halSpecDetailed.md`](docs/pages/halSpecDetailed.md) documents each parameter within
+them.
 
-**Actions.** The `action` enumeration carries eleven members [`definitions.action`], of which eight
+**Actions:** The `action` enumeration carries eleven members [`definitions.action`], of which eight
 bind a payload. `docs/pages/halSpec.md` names them all and records which are unsupported under the
 shipped schema.
 
-**Shipped schema variants.** Two schemas are shipped, both consumed by `RdkGponManager` and by no
+**Transport:** The interface is carried by the `json-hal-library` client and server, which are the
+authority for the message envelope and the client semantics:
+[rdkcentral/json-hal-library@`86a0a300`](https://github.com/rdkcentral/json-hal-library/tree/86a0a300b976f8e3295064af8fb3fd1c793c9e64).
+
+## Variant selection
+
+**Shipped Schema Variants:** Two schemas are shipped, both consumed by `RdkGponManager` and by no
 other component, and a build loads exactly one of them:
 
 | Schema | Parameter definitions | `WAN_MANAGER_UNIFICATION_ENABLED` | Configuration file the manager reads | Schema path that configuration names | Server port |
@@ -92,10 +91,6 @@ adds five `PhysicalMedia` parameters — `Alias`, `Enable`, `LastChange`, `Lower
 `docs/pages/halSpec.md` set out the selection and its effects, and
 [`docs/pages/halSpecDetailed.md`](docs/pages/halSpecDetailed.md) marks each variant-only parameter in
 place.
-
-**Transport.** The interface is carried by the `json-hal-library` client and server, which are the
-authority for the message envelope and the client semantics:
-[rdkcentral/json-hal-library@`86a0a300`](https://github.com/rdkcentral/json-hal-library/tree/86a0a300b976f8e3295064af8fb3fd1c793c9e64).
 
 ## Repository layout
 
@@ -115,13 +110,30 @@ The component builds with Autotools. `configure.ac` declares the package `RdkGpo
 and generates the makefiles for `source/` and its subdirectories; the root [`Makefile.am`](Makefile.am)
 declares `SUBDIRS = source`.
 
-**Build options.** One is exposed: `--enable-notify` adds `-DENABLE_SD_NOTIFY` and links `-lsystemd`
+**Build Options:** One is exposed: `--enable-notify` adds `-DENABLE_SD_NOTIFY` and links `-lsystemd`
 for systemd readiness notification [`configure.ac`]. A `GITVERSION` macro records
 `git describe --tags --always --dirty` into the substituted `GIT_VERSION` [`configure.ac`].
 
-**Dependencies.** The makefiles declare the libraries: the middle layer links `-lccsp_common`,
+**Dependencies:** The makefiles declare the libraries: the middle layer links `-lccsp_common`,
 `-lhal_platform`, `-ljson_hal_client`, `-ljson-c`, `-lpthread` and `-lsyscfg`
 [`source/TR-181/middle_layer_src/Makefile.am`].
+
+## Known contract defects
+
+Three defects affect a caller of this component;
+[`docs/pages/halSpecDetailed.md`](docs/pages/halSpecDetailed.md#contract-defects) carries the
+schema-level inventory.
+
+1. **Object Deletion:** `deleteObject` is unusable under both shipped schemas. Its payload
+   definition is an empty `anyOf`, so no schema-valid delete message exists; see
+   [API Surface](docs/pages/halSpec.md#api-surface).
+2. **Instanced Prefixes:** The bare prefixes `Device.X_RDK_ONT.PhysicalMedia.`,
+   `Device.X_RDK_ONT.Gem.` and `Device.X_RDK_ONT.Veip.` are not addressable without an instance
+   number, so a bulk read names one instance, such as `Device.X_RDK_ONT.PhysicalMedia.1.`, rather
+   than the bare prefix.
+3. **Shipped Example Messages:** `hal_schema/example_getParameters_msg.json` fails both schemas, and
+   `hal_schema/example_getSchemaResponse_msg.json` returns the xTM schema path
+   `/etc/rdk/hal_schemas/xtm_hal_schema.json` rather than a `GPON` one.
 
 ## Contributing
 
